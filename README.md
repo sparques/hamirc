@@ -17,11 +17,11 @@ hamirc keeps almost everything local. Everything is decentralized. Users and cha
 Much of this works because one can assume operators operating in good faith, as licensees risk their license, unlike the global Internet. 
 
 ### Features
-	1. Channels and PMs work as expected
-	2. UTF-8 Unicode is supported (including emojis 👍)
-	3. Multiple "local" users supported
-	4. User queries and PTPP are explicitly not supported (why would you even try over 1200 baud?!)
-	5. Retro-tastic chatting fun
+1. Channels and PMs work as expected
+2. UTF-8 Unicode is supported (including emojis 👍)
+3. Multiple "local" users supported
+4. User queries and PTPP are explicitly not supported (why would you even try over 1200 baud?!)
+5. Retro-tastic chatting fun
 
 ### Pipeline
 
@@ -35,19 +35,19 @@ The TNC I use (and you should probably use as well) is Direwolf with a CM108-bas
 
 # Getting Started
 
-	1. Download a hamirc release or compile for yourself.
-	2. Get your radio and TNC ready.
-		- Set radio to 145.5MHz (NB: still figuring best frequency to use)
-		- For direwolf, use the default options of 1200 baud AFSK 1200/2200
-		- It's a fool's errand to rely on VOX for transmitting, be sure you have PTT ability with your TNC unless you just want to monitor.
-	3. Start hamirc.
-		- hamirc will connect to direwolf via localhost:8001 and start listening for IRC connections on port 6667.
-	4. Setup your IRC client
-		- Set your nick to whatever you want
-		- Set your username / ident to your callsign (this is important, we're relying on this to serve as radio identification)
-		- Set your real name. You may not want to, but remember your real name can be found via your callsign, so why not make it easier for everyone else?
-		- Connect to localhost:6667
-	5. You should be good to go.
+1. Download a hamirc release or compile for yourself.
+2. Get your radio and TNC ready.
+  - Set radio to 145.5MHz (NB: still figuring best frequency to use)
+  - For direwolf, use the default options of 1200 baud AFSK 1200/2200
+  - It's a fool's errand to rely on VOX for transmitting, be sure you have PTT ability with your TNC unless you just want to monitor.
+3. Start hamirc.
+  - hamirc will connect to direwolf via localhost:8001 and start listening for IRC connections on port 6667.
+4. Setup your IRC client
+  - Set your nick to whatever you want
+  - Set your username / ident to your callsign (this is important, we're relying on this to serve as radio identification)
+  - Set your real name. You may not want to, but remember your real name can be found via your callsign, so why not make it easier for everyone else?
+  - Connect to localhost:6667
+5. You should be good to go.
 
 The default behavior is to automatically add all "local users" (that is, users connected via an IRC client on the localhost) to any channel for which a message is received. 
 

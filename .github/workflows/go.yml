@@ -9,7 +9,7 @@ on:
   pull_request:
     branches: [ "master" ]
 env:
-  CGO_ENABLED=0
+  CGO_ENABLED: 0
 
 jobs:
 

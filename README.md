@@ -1,3 +1,7 @@
+[![Coverage Status](https://coveralls.io/repos/github/sparques/hamirc/badge.svg?branch=master)](https://coveralls.io/github/sparques/hamirc?branch=master)
+[![Go ReportCard](https://goreportcard.com/badge/sparques/hamirc)](https://goreportcard.com/report/sparques/hamirc)
+[![GoDoc](https://godoc.org/github.com/golang/gddo?status.svg)](https://pkg.go.dev/github.com/sparques/hamirc)
+
 # HAMIRC
 
 hamirc is a minimal IRC server that can send and receive messages via a KISS TNC. 

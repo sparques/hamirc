@@ -23,7 +23,7 @@ jobs:
 
     - name: Build
       env: 
-        - CGO_ENABLED=0
+        CGO_ENABLED=0
       run: go build -v ./...
 
     - name: Test

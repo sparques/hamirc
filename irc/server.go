@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,6 +56,19 @@ func (u *User) Status() string {
 		return "H"
 	}
 	return "G"
+}
+
+func (u *User) String() string {
+	return u.Nick
+}
+
+func (u *User) MarshalText() (text []byte, err error) {
+	return []byte(u.ID()), nil
+}
+
+func (u *User) UnmarshalText(text []byte) (err error) {
+	u.Parse(string(text))
+	return nil
 }
 
 // Write writes to the user, in discrete lines, buffering if we did
@@ -147,6 +161,15 @@ func (s *Server) Serve(listenAddr string) error {
 		}
 		go s.handleConnection(conn)
 	}
+}
+
+func (s *Server) Channel(name string) *Channel {
+	ch, ok := s.Channels[name]
+	if ok {
+		return ch
+	}
+	s.Channels[name] = NewChannel(name)
+	return s.Channels[name]
 }
 
 // Save saves the radiouser list and channels to path.
@@ -244,7 +267,7 @@ func (s *Server) handleTNC() {
 		args[0], _ = strings.CutPrefix(args[0], ":")
 
 		// only let PRIVMSG and NOTICE through
-		if args[1] != "PRIVMSG" && args[1] != "NOTICE" {
+		if !slices.Contains([]string{"PRIVMSG", "NOTICE", "TOPIC"}, args[1]) {
 			continue
 		}
 
@@ -267,13 +290,11 @@ func (s *Server) handleTNC() {
 		// if target is channel
 		if strings.HasPrefix(args[2], "#") {
 			// create channel if it doesn't exist
-			if _, ok := s.Channels[args[2]]; !ok {
-				s.Channels[args[2]] = NewChannel(args[2])
-			}
+			ch := s.Channel(args[2])
 
 			// add user to channel if not already there
-			if nil == s.Channels[args[2]].UserByNick(incomingUser.Nick) {
-				s.joinChannel(incomingUser, args[2])
+			if nil == ch.UserByNick(incomingUser.Nick) {
+				s.joinChannel(incomingUser, ch.Name)
 			}
 
 			if s.AutoJoin {
@@ -285,10 +306,10 @@ func (s *Server) handleTNC() {
 			}
 		}
 
-		if args[1] == "PRIVMSG" {
-			s.Privmsg(incomingUser, args[2], args[3])
+		if args[1] == "TOPIC" {
+			s.setTopic(incomingUser, s.Channel(args[2]), strings.Join(args[3:], " "))
 		} else {
-			s.Notice(incomingUser, args[2], args[3])
+			s.send(incomingUser, args[1], args[2], args[3])
 		}
 	}
 
@@ -416,7 +437,7 @@ func (s *Server) handleCommand(user *User, line string) (cont bool) {
 		s.send(user, command, args[1], args[2])
 	case "PING":
 		if len(args) > 1 {
-			s.reply(user, "PONG", s.Name, args[1])
+			s.reply(user, "PONG", args[1])
 		} else {
 			s.reply(user, "PONG")
 		}
@@ -426,6 +447,12 @@ func (s *Server) handleCommand(user *User, line string) (cont bool) {
 		if len(args) > 1 {
 			s.userHost(user, args[1:])
 		}
+	case "WHOIS":
+		if len(args) == 1 {
+			s.reply(user, ERR_NONICKNAMEGIVEN, user.Nick, "No nickname given")
+			return
+		}
+		s.whois(user, args[1])
 	case "LIST":
 		s.listChannels(user)
 	case "TOPIC":
@@ -438,20 +465,11 @@ func (s *Server) handleCommand(user *User, line string) (cont bool) {
 			s.reply(user, ERR_NOSUCHCHANNEL, user.Nick, args[1], "no such channel")
 			return
 		}
-
 		if len(args) == 2 {
 			s.topic(user, args[1])
 			return
 		}
-
-		ch.Topic = strings.Join(args[2:], " ")
-		ch.TopicWho = user.Nick
-		ch.TopicTime = time.Now()
-
-		for u := range ch.Users {
-			s.reply(u, RPL_TOPIC, u.Nick, ch.Name, ch.Topic)
-		}
-
+		s.setTopic(user, ch, strings.Join(args[2:], " "))
 	case "MODE":
 		// TODO: support ban / +b
 		// we don't want to support modes other than +b
@@ -640,7 +658,7 @@ func (s *Server) joinChannel(user *User, channelName string) {
 		fmt.Fprintf(user, "%s ", u.Nick)
 	}
 	fmt.Fprintf(user, "\r\n")
-	s.reply(user, RPL_ENDOFNAMES, user.Nick, channelName)
+	s.reply(user, RPL_ENDOFNAMES, user.Nick, channelName, "End of /NAMES list")
 }
 
 func (s *Server) userHost(user *User, nicks []string) {
@@ -690,4 +708,31 @@ func (s *Server) listChannels(user *User) {
 		s.reply(user, RPL_LIST, user.Nick, ch.Name, strconv.Itoa(len(ch.Users)), ch.Topic)
 	}
 	s.reply(user, RPL_LISTEND, "End of /LIST")
+}
+
+func (s *Server) whois(user *User, nickList string) {
+	for _, nick := range strings.Split(nickList, ",") {
+		u := s.UserByNick(nick)
+		if u == nil {
+			s.reply(user, ERR_NOSUCHNICK, nick, ":No such nick")
+			continue
+		}
+		s.reply(user, RPL_WHOISUSER, user.Nick, u.Nick, u.Callsign, "*", u.RealName)
+	}
+	s.reply(user, RPL_ENDOFWHOIS, nickList, "End of /WHOIS list")
+}
+
+func (s *Server) setTopic(user *User, ch *Channel, topic string) {
+	ch.Topic = topic
+	ch.TopicWho = user.Nick
+	ch.TopicTime = time.Now()
+
+	for u := range ch.Users {
+		s.reply(u, RPL_TOPIC, u.Nick, ch.Name, ch.Topic)
+	}
+
+	// also push out topic change
+	if user.Local() {
+		fmt.Fprintf(s.tnc.Port(0), ":%s %s %s :%s", user.ID(), "TOPIC", ch.Name, ch.Topic)
+	}
 }

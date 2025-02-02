@@ -104,7 +104,7 @@ func (s *Server) Load(path string) error {
 	return nil
 }
 
-func (ucm UserChanMap) MarshalJSON() ([]byte, error) {
+func (ucm ChanUserMap) MarshalJSON() ([]byte, error) {
 	nicks := make([]string, 0, len(ucm))
 
 	for nick := range ucm {
@@ -128,8 +128,8 @@ func (ucm UserChanMap) MarshalJSON() ([]byte, error) {
 	return json.Marshal(nicks)
 }
 
-func (ucm *UserChanMap) UnmarshalJSON(data []byte) error {
-	userChanMap := make(UserChanMap)
+func (ucm *ChanUserMap) UnmarshalJSON(data []byte) error {
+	userChanMap := make(ChanUserMap)
 	var nicks []string
 	err := json.Unmarshal(data, &nicks)
 	if err != nil {

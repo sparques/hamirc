@@ -2,8 +2,6 @@ package irc
 
 import (
 	"bufio"
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"hamirc/kiss"
 	"io"
@@ -17,116 +15,16 @@ import (
 	"time"
 )
 
-// User represents a connected IRC client
-type User struct {
-	Nick     string
-	Callsign string
-	RealName string
-	LastSeen time.Time
-	Conn     net.Conn
-	local    bool
-
-	buf *bufio.Writer
-}
-
-func NewUser(nick string, wr io.Writer) *User {
-	return &User{
-		Nick: nick,
-		buf:  bufio.NewWriter(wr),
-	}
-}
-
-func (u *User) ID() string {
-	return fmt.Sprintf("%s!%s@%s", u.Nick, u.Callsign, strings.Join(strings.Fields(u.RealName), "_"))
-}
-
-func (u *User) Parse(id string) {
-	fmt.Sscanf(id, "%s!%s@%s ", &u.Nick, &u.Callsign, &u.RealName)
-}
-
-// Local returns true if the user is connected via TCP. This is used
-// to distinguish users sending messages via radio. Local() for radio
-// users will return false.
-func (u *User) Local() bool {
-	return u.local
-}
-
-func (u *User) Status() string {
-	if time.Since(u.LastSeen) < time.Hour {
-		return "H"
-	}
-	return "G"
-}
-
-func (u *User) String() string {
-	return u.Nick
-}
-
-func (u *User) MarshalText() (text []byte, err error) {
-	return []byte(u.ID()), nil
-}
-
-func (u *User) UnmarshalText(text []byte) (err error) {
-	u.Parse(string(text))
-	return nil
-}
-
-// Write writes to the user, in discrete lines, buffering if we did
-// not get a line-feed.
-func (u *User) Write(buf []byte) (n int, err error) {
-	var n2 int
-	for len(buf) > 0 {
-		i := bytes.Index(buf, []byte{'\n'})
-		if i == -1 {
-			n2, err = u.buf.Write(buf)
-			n += n2
-			return
-		}
-		n2, err = u.buf.Write(buf[:i+1])
-		n += n2
-		u.buf.Flush()
-		buf = buf[i+1:]
-	}
-
-	return len(buf), nil
-}
-
-// Channel represents an IRC channel
-type Channel struct {
-	*sync.Mutex
-	Name      string
-	Users     map[*User]*User
-	Topic     string
-	TopicTime time.Time
-	TopicWho  string
-}
-
-func NewChannel(name string) *Channel {
-	return &Channel{
-		Mutex: &sync.Mutex{},
-		Name:  name,
-		Users: make(map[*User]*User),
-	}
-}
-
-func (c *Channel) UserByNick(nick string) *User {
-	nick = strings.ToLower(nick)
-	for u := range c.Users {
-		if strings.ToLower(u.Nick) == nick {
-			return u
-		}
-	}
-	return nil
-}
+type UserMap map[string]*User
 
 // Server represents the IRC server
 type Server struct {
-	*sync.Mutex
-	Name     string
-	Users    map[*User]*User
-	Channels map[string]*Channel
-	tnc      *kiss.TNC
-	MOTD     func() string
+	*sync.Mutex `json:"-"`
+	Name        string
+	Users       UserMap
+	Channels    map[string]*Channel
+	tnc         *kiss.TNC
+	MOTD        func() string `json:"-"`
 	// AutoJoin causes Local() users to automatically join channels they
 	// get messages for.
 	AutoJoin bool
@@ -136,9 +34,13 @@ func NewServer() *Server {
 	return &Server{
 		Mutex:    &sync.Mutex{},
 		Name:     "server",
-		Users:    make(map[*User]*User),
+		Users:    make(UserMap),
 		Channels: make(map[string]*Channel),
 	}
+}
+
+func (s *Server) Nick(nick string) *User {
+	return s.Users[strings.ToLower(nick)]
 }
 
 func (s *Server) Serve(listenAddr string) error {
@@ -156,7 +58,7 @@ func (s *Server) Serve(listenAddr string) error {
 		conn, err := listener.Accept()
 		log.Printf("New connection on %s\n", conn.RemoteAddr())
 		if err != nil {
-			fmt.Printf("Error accepting connection: %v\n", err)
+			log.Printf("Error accepting connection: %v\n", err)
 			continue
 		}
 		go s.handleConnection(conn)
@@ -170,42 +72,6 @@ func (s *Server) Channel(name string) *Channel {
 	}
 	s.Channels[name] = NewChannel(name)
 	return s.Channels[name]
-}
-
-// Save saves the radiouser list and channels to path.
-// This can be restored with Load(path).
-func (s *Server) Save(path string) error {
-	s.Lock()
-	defer s.Unlock()
-	fh, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer fh.Close()
-	// enc := gob.NewEncoder(fh)
-	enc := json.NewEncoder(fh)
-	err = enc.Encode(s)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (s *Server) Load(path string) error {
-	s.Lock()
-	defer s.Unlock()
-	fh, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer fh.Close()
-	dec := json.NewDecoder(fh)
-	err = dec.Decode(&s)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func parse(line string) []string {
@@ -257,6 +123,8 @@ func (s *Server) handleTNC() {
 		buf = buf[0:1024]
 		n, err := port.Read(buf)
 		if err != nil {
+			log.Printf("error reading from TNC port: %s", err)
+			log.Printf("disconnecting from TNC")
 			return
 		}
 		// TODO: error handling.
@@ -266,7 +134,7 @@ func (s *Server) handleTNC() {
 		args := parse(strings.ReplaceAll(string(buf), "\n", " "))
 		args[0], _ = strings.CutPrefix(args[0], ":")
 
-		// only let PRIVMSG and NOTICE through
+		// only let PRIVMSG, NOTICE, and topic through
 		if !slices.Contains([]string{"PRIVMSG", "NOTICE", "TOPIC"}, args[1]) {
 			continue
 		}
@@ -279,13 +147,13 @@ func (s *Server) handleTNC() {
 			continue
 		}
 		// add user to server if not previously seen
-		if nil == s.UserByNick(incomingUser.Nick) {
-			s.Users[incomingUser] = incomingUser
+		if existingUser := s.Nick(incomingUser.Nick); existingUser == nil {
+			s.Users[strings.ToLower(incomingUser.Nick)] = incomingUser
 		} else {
-			incomingUser = s.UserByNick(incomingUser.Nick)
+			incomingUser = existingUser
 		}
 
-		// do ban check here?
+		// do user-level ban check here?
 
 		// if target is channel
 		if strings.HasPrefix(args[2], "#") {
@@ -293,13 +161,14 @@ func (s *Server) handleTNC() {
 			ch := s.Channel(args[2])
 
 			// add user to channel if not already there
-			if nil == ch.UserByNick(incomingUser.Nick) {
+			if nil == ch.Nick(incomingUser.Nick) {
 				s.joinChannel(incomingUser, ch.Name)
 			}
 
 			if s.AutoJoin {
-				for u := range s.Users {
-					if u.Local() {
+				for _, u := range s.Users {
+					_, ok := ch.Users[u.Nick]
+					if u.Local() && !ok {
 						s.joinChannel(u, args[2])
 					}
 				}
@@ -321,23 +190,23 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	scanner := bufio.NewScanner(conn)
 
-	// Assign a temporary nickname
 	var hijack = struct {
 		io.Writer
 		io.Reader
 	}{
-		Writer: io.MultiWriter(conn, os.Stdout),
+		// Writer: io.MultiWriter(conn, os.Stdout),
+		Writer: io.MultiWriter(conn),
 		Reader: conn,
 	}
 
 	user := NewUser("", hijack)
 	user.local = true
-	user.Conn = conn
+	user.conn = conn
 
 	// Handle commands
 	for scanner.Scan() {
 		if scanner.Err() != nil {
-			fmt.Printf("User %s disconnected.\n", user.ID())
+			log.Printf("<%s@%s> Disconnected\n", user.ID(), conn.RemoteAddr())
 			s.removeUser(user)
 			return
 		}
@@ -352,21 +221,24 @@ func (s *Server) removeUser(user *User) {
 	s.Lock()
 	defer s.Unlock()
 
-	delete(s.Users, user)
+	delete(s.Users, strings.ToLower(user.Nick))
 	for _, ch := range s.Channels {
 		// need to add quit message
-		delete(ch.Users, user)
+		delete(ch.Users, user.Nick)
 	}
 }
 
 func (s *Server) acceptUser(user *User) {
+	if user.Nick == "" {
+		return
+	}
 	s.reply(user, RPL_WELCOME, user.Nick, "Connected.")
 	s.reply(user, RPL_YOURHOST, user.Nick, "Your host is an abomination.")
 	s.reply(user, RPL_CREATED, user.Nick, "Server was created within the last century.")
 
 	log.Printf("Accepted user %s.\n", user.ID())
 	s.Lock()
-	s.Users[user] = user
+	s.Users[strings.ToLower(user.Nick)] = user
 	s.Unlock()
 
 	s.motd(user)
@@ -388,7 +260,9 @@ func (s *Server) PingPong() {
 		time.Sleep(time.Second * 30)
 		s.Lock()
 		for _, user := range s.Users {
-			fmt.Fprintf(user, "PING :LAG%d\n", time.Now().Unix())
+			if user.Local() {
+				fmt.Fprintf(user, "PING :LAG%d\n", time.Now().Unix())
+			}
 		}
 		s.Unlock()
 	}
@@ -402,25 +276,42 @@ func (s *Server) handleCommand(user *User, line string) (cont bool) {
 
 	//log.Printf("<%s@%s> %s\n", user.Nick, user.Conn.RemoteAddr(), line)
 
-	log.Printf(">>%s\n", args)
-	if user.Nick == "" && command != "NICK" && command != "USER" {
-		s.reply(user, ERR_NOTREGISTERED, "*", command, "You have not registered")
-		return
+	log.Printf("<%s@%s> %s\n", user.Nick, user.conn.RemoteAddr(), args)
+	if user.Nick == "" {
+		switch command {
+		case "NICK", "USER", "CAP":
+		default:
+			s.reply(user, ERR_NOTREGISTERED, "*", command, "You have not registered")
+			return
+		}
 	}
 	switch command {
 	case "CAP":
 		s.reply(user, "CAP", "LS")
 	case "NICK":
+		oldNick := user.Nick
 		s.changeNick(user, args[1])
-		//s.setNick
+		if oldNick == "" && user.Callsign != "" {
+			s.acceptUser(user)
+		}
 	case "USER":
 		// after we get a USER, send the welcome wagon
+		if user.Callsign != "" {
+			s.reply(user, ERR_ALREADYREGISTERED, "You may not reregister")
+			return
+		}
+		if len(args) != 5 {
+			s.reply(user, ERR_NEEDMOREPARAMS, "Need more params for USER")
+			return
+		}
 		user.Callsign = args[1]
 		user.RealName = args[4]
-		s.acceptUser(user)
+		if user.Nick != "" {
+			s.acceptUser(user)
+		}
 	case "JOIN":
-		if len(args) == 1 {
-			fmt.Fprintf(user, ":%s 461 %s JOIN :Not enough parameters\n", s.Name, user.Nick)
+		if len(args) != 2 {
+			s.reply(user, ERR_NEEDMOREPARAMS, user.Nick, "Not enough parameters")
 			return
 		}
 		for _, ch := range strings.Split(args[1], ",") {
@@ -471,7 +362,8 @@ func (s *Server) handleCommand(user *User, line string) (cont bool) {
 		}
 		s.setTopic(user, ch, strings.Join(args[2:], " "))
 	case "MODE":
-		// TODO: support ban / +b
+		// TODO: support ban / +b ?
+		// Is it necessary? Most clients have an ignore feature
 		// we don't want to support modes other than +b
 		s.reply(user, ERR_UNKNOWNMODE, args[1], "Server doesn't support modes")
 	case "MOTD":
@@ -494,13 +386,13 @@ func (s *Server) handleCommand(user *User, line string) (cont bool) {
 
 			}
 
-			if ch.Users[user] == nil {
+			if ch.Nick(user.Nick) == nil {
 				s.reply(user, ERR_NOTONCHANNEL, user.Nick, chName, "you're not in that channel")
 				continue
 			}
 
 			s.send(user, "PART", chName, reason)
-			delete(ch.Users, user)
+			delete(ch.Users, user.Nick)
 		}
 
 	case "QUIT":
@@ -536,8 +428,13 @@ func (s *Server) changeNick(user *User, newNick string) {
 	s.Lock()
 	defer s.Unlock()
 
+	newNickLower := strings.ToLower(newNick)
+	oldNickLower := strings.ToLower(user.Nick)
+
 	// Check if the new nickname is already in use
-	if nil != s.UserByNick(newNick) {
+	// allow person to snag a remote user though
+	existingUser, ok := s.Users[newNickLower]
+	if ok && existingUser.Local() {
 		s.reply(user, "433", user.Nick, newNick, "Nickname is already in use")
 		return
 	}
@@ -545,6 +442,13 @@ func (s *Server) changeNick(user *User, newNick string) {
 	// Update the server's user list
 	oldNick := user.Nick
 	user.Nick = newNick
+
+	for _, ch := range s.Channels {
+		if _, ok := ch.Users[oldNickLower]; ok {
+			ch.Users[newNickLower] = user
+			delete(ch.Users, oldNickLower)
+		}
+	}
 
 	if oldNick == "" {
 		oldNick = newNick
@@ -581,16 +485,6 @@ func (s *Server) listUsers(user *User, mask string) {
 	}
 }
 
-func (s *Server) UserByNick(nick string) *User {
-	nick = strings.ToLower(nick)
-	for u := range s.Users {
-		if strings.ToLower(u.Nick) == nick {
-			return u
-		}
-	}
-	return nil
-}
-
 func (s *Server) send(sender *User, cmd, target, msg string) {
 	// update LastSeen
 	sender.LastSeen = time.Now()
@@ -605,8 +499,8 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 		if !ok {
 			return
 		}
-		for u := range ch.Users {
-			if u == sender && cmd != "PART" {
+		for _, u := range ch.Users {
+			if u.Nick == sender.Nick && cmd != "PART" {
 				continue
 			}
 			fmt.Fprintf(u, ":%s %s %s :%s\n", sender.ID(), cmd, target, msg)
@@ -614,8 +508,8 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 		return
 	}
 
-	targetUser := s.UserByNick(target)
-	if targetUser == nil {
+	targetUser, ok := s.Users[target]
+	if !ok {
 		return
 	}
 	fmt.Fprintf(targetUser, ":%s %s %s :%s\n", sender.ID(), cmd, target, msg)
@@ -638,10 +532,10 @@ func (s *Server) joinChannel(user *User, channelName string) {
 		s.Channels[channelName] = channel
 	}
 	channel.Lock()
-	channel.Users[user] = user
+	channel.Users[strings.ToLower(user.Nick)] = user
 	channel.Unlock()
 
-	for u := range channel.Users {
+	for _, u := range channel.Users {
 		fmt.Fprintf(u, ":%s JOIN :%s\r\n", user.ID(), channelName)
 	}
 	s.Unlock()
@@ -654,7 +548,7 @@ func (s *Server) joinChannel(user *User, channelName string) {
 
 	fmt.Fprintf(user, ":%s 353 %s = %s :", s.Name, user.Nick, channelName)
 
-	for u := range channel.Users {
+	for _, u := range channel.Users {
 		fmt.Fprintf(user, "%s ", u.Nick)
 	}
 	fmt.Fprintf(user, "\r\n")
@@ -666,8 +560,8 @@ func (s *Server) userHost(user *User, nicks []string) {
 	fmt.Fprintf(user, ":%s 302 %s :", s.Name, user.Nick)
 
 	for _, nick := range nicks {
-		u := s.UserByNick(nick)
-		if u == nil {
+		u, ok := s.Users[nick]
+		if !ok {
 			continue
 		}
 		fmt.Fprintf(user, "%s=-%s@%s ", nick, u.Callsign, strings.ReplaceAll(u.RealName, " ", "_"))
@@ -677,7 +571,7 @@ func (s *Server) userHost(user *User, nicks []string) {
 
 func (s *Server) quit(user *User, reason string) {
 	for _, ch := range s.Channels {
-		if _, ok := ch.Users[user]; ok {
+		if _, ok := ch.Users[strings.ToLower(user.Nick)]; ok {
 			s.send(user, "QUIT", ch.Name, reason)
 		}
 	}
@@ -704,7 +598,8 @@ func (s *Server) topic(user *User, channel string) {
 func (s *Server) listChannels(user *User) {
 	// we don't support filters or anything because why bother
 	s.reply(user, RPL_LISTSTART, "Channel", "Users Name")
-	for _, ch := range s.Channels {
+	for chName, ch := range s.Channels {
+		log.Printf("Listing Channel: %s %s\n", chName, ch)
 		s.reply(user, RPL_LIST, user.Nick, ch.Name, strconv.Itoa(len(ch.Users)), ch.Topic)
 	}
 	s.reply(user, RPL_LISTEND, "End of /LIST")
@@ -712,7 +607,7 @@ func (s *Server) listChannels(user *User) {
 
 func (s *Server) whois(user *User, nickList string) {
 	for _, nick := range strings.Split(nickList, ",") {
-		u := s.UserByNick(nick)
+		u := s.Nick(nick)
 		if u == nil {
 			s.reply(user, ERR_NOSUCHNICK, nick, ":No such nick")
 			continue
@@ -727,7 +622,7 @@ func (s *Server) setTopic(user *User, ch *Channel, topic string) {
 	ch.TopicWho = user.Nick
 	ch.TopicTime = time.Now()
 
-	for u := range ch.Users {
+	for _, u := range ch.Users {
 		s.reply(u, RPL_TOPIC, u.Nick, ch.Name, ch.Topic)
 	}
 

@@ -2,12 +2,18 @@ package main
 
 import (
 	"hamirc/irc"
+	"log"
 	"os/exec"
 )
 
 func main() {
 	server := irc.NewServer()
 	// Automatically have local users join any newly seen channels
+	err := server.Load("serverState.json")
+	if err != nil {
+		log.Println("Couldn't load server state:", err)
+	}
+	go server.PersistState("serverState.json")
 	server.AutoJoin = true
 	server.MOTD = func() string {
 		cmd := exec.Command("fortune")

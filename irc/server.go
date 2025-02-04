@@ -2,6 +2,7 @@ package irc
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"hamirc/kiss"
 	"io"
@@ -28,6 +29,7 @@ type Server struct {
 	// AutoJoin causes Local() users to automatically join channels they
 	// get messages for.
 	AutoJoin bool
+	exitch   chan error
 }
 
 func NewServer() *Server {
@@ -36,6 +38,7 @@ func NewServer() *Server {
 		Name:     "server",
 		Users:    make(UserMap),
 		Channels: make(map[string]*Channel),
+		exitch:   make(chan error),
 	}
 }
 
@@ -54,17 +57,24 @@ func (s *Server) Serve(listenAddr string) error {
 
 	go s.PingPong()
 
-	for {
-		conn, err := listener.Accept()
-		log.Printf("New connection on %s\n", conn.RemoteAddr())
-		if err != nil {
-			log.Printf("Error accepting connection: %v\n", err)
-			continue
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				log.Printf("Error accepting connection: %v\n", err)
+				continue
+			}
+			log.Printf("New connection on %s\n", conn.RemoteAddr())
+			go s.handleConnection(conn)
 		}
-		go s.handleConnection(conn)
-	}
+	}()
+
+	return <-s.exitch
 }
 
+func (s *Server) Exit(err error) {
+	s.exitch <- err
+}
 func (s *Server) Channel(name string) *Channel {
 	ch, ok := s.Channels[name]
 	if ok {
@@ -114,6 +124,7 @@ func (s *Server) OpenTNC(path string) error {
 }
 
 func (s *Server) handleTNC() {
+	defer s.Exit(errors.New("lost connection to TNC"))
 	// Just use port zero
 	port := s.tnc.Port(0)
 	// send our out going
@@ -124,7 +135,6 @@ func (s *Server) handleTNC() {
 		n, err := port.Read(buf)
 		if err != nil {
 			log.Printf("error reading from TNC port: %s", err)
-			log.Printf("disconnecting from TNC")
 			return
 		}
 		// TODO: error handling.
@@ -257,7 +267,7 @@ func (s *Server) motd(user *User) {
 
 func (s *Server) PingPong() {
 	for {
-		time.Sleep(time.Second * 30)
+		time.Sleep(2 * time.Minute)
 		s.Lock()
 		for _, user := range s.Users {
 			if user.Local() {
@@ -481,7 +491,7 @@ func (s *Server) listChannels(user *User) {
 	// we don't support filters or anything because why bother
 	s.reply(user, RPL_LISTSTART, "Channel", "Users Name")
 	for chName, ch := range s.Channels {
-		log.Printf("Listing Channel: %s %s\n", chName, ch)
+		log.Printf("Listing Channel: %s %v\n", chName, ch)
 		s.reply(user, RPL_LIST, user.Nick, ch.Name, strconv.Itoa(len(ch.Users)), ch.Topic)
 	}
 	s.reply(user, RPL_LISTEND, "End of /LIST")

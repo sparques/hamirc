@@ -130,6 +130,7 @@ func list(s *Server, user *User, args []string) (quit bool) {
 	s.listChannels(user)
 	return
 }
+
 func topic(s *Server, user *User, args []string) (quit bool) {
 	if len(args) < 2 {
 		s.reply(user, ERR_NEEDMOREPARAMS, user.Nick, "TOPIC requires 2 or more params")
@@ -196,8 +197,6 @@ func quit(s *Server, user *User, args []string) (quit bool) {
 		s.quit(user, strings.Join(args[1:], " "))
 	}
 	return true
-
-	return
 }
 
 /*

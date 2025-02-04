@@ -27,5 +27,7 @@ func NewChannel(name string) *Channel {
 }
 
 func (ch *Channel) Nick(nick string) *User {
+	ch.Lock()
+	defer ch.Unlock()
 	return ch.Users[strings.ToLower(nick)]
 }

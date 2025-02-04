@@ -24,12 +24,13 @@ type Server struct {
 	Name        string
 	Users       UserMap
 	Channels    map[string]*Channel
-	tnc         *kiss.TNC
 	MOTD        func() string `json:"-"`
 	// AutoJoin causes Local() users to automatically join channels they
 	// get messages for.
 	AutoJoin bool
 	exitch   chan error
+	tnc      *kiss.TNC
+	tncport  int
 }
 
 func NewServer() *Server {
@@ -43,6 +44,8 @@ func NewServer() *Server {
 }
 
 func (s *Server) Nick(nick string) *User {
+	s.Lock()
+	defer s.Unlock()
 	return s.Users[strings.ToLower(nick)]
 }
 
@@ -76,6 +79,8 @@ func (s *Server) Exit(err error) {
 	s.exitch <- err
 }
 func (s *Server) Channel(name string) *Channel {
+	s.Lock()
+	defer s.Unlock()
 	ch, ok := s.Channels[name]
 	if ok {
 		return ch
@@ -102,12 +107,13 @@ func parse(line string) []string {
 
 // ConnectTNC connects to a TNC (let's be honest here, it's direwolf) via
 // tcp.
-func (s *Server) ConnectTNC(addr string) error {
+func (s *Server) ConnectTNC(addr string, tncport int) error {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("could not connect to kiss tnc: %w", err)
 	}
 	s.tnc = kiss.NewTNC(conn)
+	s.tncport = tncport
 	return nil
 }
 
@@ -126,7 +132,7 @@ func (s *Server) OpenTNC(path string) error {
 func (s *Server) handleTNC() {
 	defer s.Exit(errors.New("lost connection to TNC"))
 	// Just use port zero
-	port := s.tnc.Port(0)
+	port := s.tnc.Port(uint8(s.tncport))
 	// send our out going
 	// read incoming messages
 	buf := make([]byte, 1024*512)
@@ -350,6 +356,9 @@ func (s *Server) changeNick(user *User, newNick string) {
 }
 
 func (s *Server) listUsers(user *User, mask string) {
+	s.Lock()
+	defer s.Unlock()
+
 	// who response:Is there
 	// 352 <channel> <user> <host> <server> <nick> <status> :<hopcount> <realname>
 
@@ -378,12 +387,15 @@ func (s *Server) listUsers(user *User, mask string) {
 }
 
 func (s *Server) send(sender *User, cmd, target, msg string) {
+	s.Lock()
+	defer s.Unlock()
+
 	// update LastSeen
 	sender.LastSeen = time.Now()
 
 	// Transmit message via radio
 	if sender.Local() {
-		fmt.Fprintf(s.tnc.Port(0), ":%s %s %s :%s", sender.ID(), cmd, target, msg)
+		fmt.Fprintf(s.tnc.Port(uint8(s.tncport)), ":%s %s %s :%s", sender.ID(), cmd, target, msg)
 	}
 
 	if strings.HasPrefix(target, "#") {
@@ -448,6 +460,9 @@ func (s *Server) joinChannel(user *User, channelName string) {
 }
 
 func (s *Server) userHost(user *User, nicks []string) {
+	s.Lock()
+	defer s.Unlock()
+
 	//:irc.example.com 302 Sparques :Nick1=-user1@host1 Nick2=+user2@host2
 	fmt.Fprintf(user, ":%s 302 %s :", s.Name, user.Nick)
 
@@ -462,6 +477,8 @@ func (s *Server) userHost(user *User, nicks []string) {
 }
 
 func (s *Server) quit(user *User, reason string) {
+	s.Lock()
+	defer s.Unlock()
 	for _, ch := range s.Channels {
 		if _, ok := ch.Users[strings.ToLower(user.Nick)]; ok {
 			s.send(user, "QUIT", ch.Name, reason)
@@ -470,6 +487,8 @@ func (s *Server) quit(user *User, reason string) {
 }
 
 func (s *Server) topic(user *User, channel string) {
+	s.Lock()
+	defer s.Unlock()
 	// TODO: Figure out a way to share topics
 	// When topic is set, might have to broadcast out something like
 	// :<user.ID()> TOPIC <channel> <topic>
@@ -488,6 +507,8 @@ func (s *Server) topic(user *User, channel string) {
 }
 
 func (s *Server) listChannels(user *User) {
+	s.Lock()
+	defer s.Unlock()
 	// we don't support filters or anything because why bother
 	s.reply(user, RPL_LISTSTART, "Channel", "Users Name")
 	for chName, ch := range s.Channels {
@@ -510,6 +531,9 @@ func (s *Server) whois(user *User, nickList string) {
 }
 
 func (s *Server) setTopic(user *User, ch *Channel, topic string) {
+	s.Lock()
+	defer s.Unlock()
+
 	ch.Topic = topic
 	ch.TopicWho = user.Nick
 	ch.TopicTime = time.Now()

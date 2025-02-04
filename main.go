@@ -16,6 +16,7 @@ var (
 	persist   = flag.Bool("persist", true, "if true, will load/save server state (users, channels, topics) to a file")
 	mustload  = flag.Bool("mustload", true, "if true, loading the state must succeed or program will exit; this is to prevent a server state file from being overwritten by an empty server state.")
 	autojoin  = flag.Bool("autojoin", true, "if true, will cause local users (those connected via TCP) to automatically join any channels that receive a message")
+	tncport   = flag.Int("tncport", 0, "the TNC port to use; valid options: 0-7;")
 )
 
 func main() {
@@ -45,7 +46,7 @@ func main() {
 		}
 		return string(out)
 	}
-	err := server.ConnectTNC(*tncaddr)
+	err := server.ConnectTNC(*tncaddr, *tncport)
 	if err != nil {
 		log.Println(err)
 		return

@@ -2,11 +2,9 @@ package irc
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
 	"os"
 	"slices"
 	"strings"
@@ -16,28 +14,28 @@ import (
 
 func (s *Server) PersistState(path string) {
 	var (
-		// lastStateHash uint64
-		buf = bytes.NewBuffer(nil)
-		// hash          = fnv.New64a()
+	// lastStateHash uint64
+	// buf = bytes.NewBuffer(nil)
+	// hash          = fnv.New64a()
 	)
 
-	jenc := json.NewEncoder(buf)
+	// jenc := json.NewEncoder(buf)
 	for {
 		// time.Sleep(time.Minute)
 		time.Sleep(time.Second * 10)
-		buf.Reset()
-		// hash.Reset()
-		s.Lock()
-		err := jenc.Encode(s)
-		s.Unlock()
-		if err != nil {
-			log.Printf("could not marshal json: %s", err)
-		}
+		// buf.Reset()
 		/*
-			currentState := hash.Sum64()
-			if currentState == lastStateHash {
-				continue
+			hash.Reset()
+			s.Lock()
+			err := jenc.Encode(s)
+			s.Unlock()
+			if err != nil {
+				log.Printf("could not marshal json: %s", err)
 			}
+				currentState := hash.Sum64()
+				if currentState == lastStateHash {
+					continue
+				}
 		*/
 		s.Save(path)
 		//lastStateHash = currentState

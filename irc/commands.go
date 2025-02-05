@@ -1,11 +1,14 @@
 package irc
 
-import "strings"
+import (
+	"strings"
+)
 
 type serverCommand func(s *Server, user *User, args []string) (quit bool)
 
 var cmdSet = map[string]serverCommand{
 	"CAP":      capabilities,
+	"ECHO":     echo,
 	"JOIN":     join,
 	"LIST":     list,
 	"MODE":     mode,
@@ -26,6 +29,12 @@ var cmdSet = map[string]serverCommand{
 
 func capabilities(s *Server, user *User, args []string) (quit bool) {
 	s.reply(user, "CAP", "LS")
+	return
+}
+
+func echo(s *Server, user *User, args []string) (quit bool) {
+	// send whatever the user has sent back to the user
+	s.reply(user, args[1:]...)
 	return
 }
 

@@ -285,8 +285,7 @@ func (s *Server) PingPong() {
 }
 
 // handleCommand processes IRC commands
-func (s *Server) handleCommand(user *User, line string) (cont bool) {
-	cont = false
+func (s *Server) handleCommand(user *User, line string) (quit bool) {
 	args := parse(line)
 	command := strings.ToUpper(args[0])
 
@@ -305,7 +304,7 @@ func (s *Server) handleCommand(user *User, line string) (cont bool) {
 	if cmdFunc, ok := cmdSet[command]; ok {
 		return cmdFunc(s, user, args)
 	} else {
-		s.reply(user, "421", user.Nick, command, "Unknown command")
+		s.reply(user, ERR_UNKNOWNCOMMAND, user.Nick, command, "Unknown command")
 	}
 
 	return
@@ -333,7 +332,7 @@ func (s *Server) changeNick(user *User, newNick string) {
 	// allow person to snag a remote user though
 	existingUser, ok := s.Users[newNickLower]
 	if ok && existingUser.Local() {
-		s.reply(user, "433", user.Nick, newNick, "Nickname is already in use")
+		s.reply(user, ERR_NICKNAMEINUSE, user.Nick, newNick, "Nickname is already in use")
 		return
 	}
 
@@ -511,8 +510,7 @@ func (s *Server) listChannels(user *User) {
 	defer s.Unlock()
 	// we don't support filters or anything because why bother
 	s.reply(user, RPL_LISTSTART, "Channel", "Users Name")
-	for chName, ch := range s.Channels {
-		log.Printf("Listing Channel: %s %v\n", chName, ch)
+	for _, ch := range s.Channels {
 		s.reply(user, RPL_LIST, user.Nick, ch.Name, strconv.Itoa(len(ch.Users)), ch.Topic)
 	}
 	s.reply(user, RPL_LISTEND, "End of /LIST")
@@ -544,6 +542,6 @@ func (s *Server) setTopic(user *User, ch *Channel, topic string) {
 
 	// also push out topic change
 	if user.Local() {
-		fmt.Fprintf(s.tnc.Port(0), ":%s %s %s :%s", user.ID(), "TOPIC", ch.Name, ch.Topic)
+		fmt.Fprintf(s.tnc.Port(uint8(s.tncport)), ":%s %s %s :%s", user.ID(), "TOPIC", ch.Name, ch.Topic)
 	}
 }

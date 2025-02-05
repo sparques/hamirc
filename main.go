@@ -3,10 +3,11 @@ package main
 import (
 	"errors"
 	"flag"
-	"hamirc/irc"
 	"log"
 	"os"
 	"os/exec"
+
+	"github.com/sparques/hamirc/irc"
 )
 
 var (

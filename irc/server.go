@@ -57,6 +57,7 @@ func (s *Server) Serve(listenAddr string) error {
 	}
 	defer listener.Close()
 
+	log.Printf("%s server started. Listening on %s", s.Name, listenAddr)
 	go s.handleTNC()
 
 	go s.PingPong()
@@ -113,6 +114,7 @@ func (s *Server) ConnectTNC(addr string, tncport int) error {
 	if err != nil {
 		return fmt.Errorf("could not connect to kiss tnc: %w", err)
 	}
+	log.Printf("Connected to TNC port %d at %s", tncport, addr)
 	s.tnc = kiss.NewTNC(conn)
 	s.tncport = tncport
 	return nil
@@ -150,6 +152,8 @@ func (s *Server) handleTNC() {
 		// replace \n just in case...
 		args := parse(strings.ReplaceAll(string(buf), "\n", " "))
 		args[0], _ = strings.CutPrefix(args[0], ":")
+
+		log.Printf("<TNC> %v", args)
 
 		// only let PRIVMSG, NOTICE, and topic through
 		if !slices.Contains([]string{"PRIVMSG", "NOTICE", "TOPIC"}, args[1]) {

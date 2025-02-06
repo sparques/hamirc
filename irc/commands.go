@@ -28,7 +28,12 @@ var cmdSet = map[string]serverCommand{
 }
 
 func capabilities(s *Server, user *User, args []string) (quit bool) {
-	s.reply(user, "CAP", "LS")
+	// We don't support much...
+	s.reply(user, "CAP", "*", "LS", "")
+	//410 * FOO :Invalid CAP command
+	// if len(args) > 1 {
+	// s.reply(user, "410", "*", args[1], "Incapable server")
+	// }
 	return
 }
 

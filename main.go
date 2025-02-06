@@ -12,6 +12,7 @@ import (
 
 var (
 	tncaddr   = flag.String("tnc", ":8001", "address of TNC")
+	name      = flag.String("name", "hamirc", "name of the server as sent to clients")
 	serve     = flag.String("serve", ":6667", "port and optionally address to listen on for IRC connections")
 	statefile = flag.String("state", "serverState.json", "path to file for loading/saving server state")
 	persist   = flag.Bool("persist", true, "if true, will load/save server state (users, channels, topics) to a file")
@@ -36,6 +37,7 @@ func main() {
 	}
 	// Automatically have local users join any newly seen channels
 	server.AutoJoin = *autojoin
+	server.Name = *name
 	server.MOTD = func() string {
 		cmd := exec.Command("fortune")
 		if cmd.Err != nil {

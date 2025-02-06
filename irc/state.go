@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"hash/fnv"
 	"io"
+	"log"
 	"os"
 	"slices"
 	"strings"
@@ -14,31 +16,33 @@ import (
 
 func (s *Server) PersistState(path string) {
 	var (
-	// lastStateHash uint64
-	// buf = bytes.NewBuffer(nil)
-	// hash          = fnv.New64a()
+		lastStateHash uint64
+		hash          = fnv.New64a()
 	)
 
-	// jenc := json.NewEncoder(buf)
+	jenc := json.NewEncoder(hash)
 	for {
-		// time.Sleep(time.Minute)
 		time.Sleep(time.Second * 10)
-		// buf.Reset()
-		/*
-			hash.Reset()
-			s.Lock()
-			err := jenc.Encode(s)
-			s.Unlock()
-			if err != nil {
-				log.Printf("could not marshal json: %s", err)
-			}
-				currentState := hash.Sum64()
-				if currentState == lastStateHash {
-					continue
-				}
-		*/
-		s.Save(path)
-		//lastStateHash = currentState
+
+		hash.Reset()
+		s.Lock()
+		err := jenc.Encode(s)
+		s.Unlock()
+		if err != nil {
+			log.Printf("could not marshal json: %s", err)
+		}
+		currentState := hash.Sum64()
+		if currentState == lastStateHash {
+			continue
+		}
+
+		err = s.Save(path)
+		if err == nil {
+			log.Printf("Saved server state (%X)", currentState)
+		} else {
+			log.Printf("Error saving server state: %s", err)
+		}
+		lastStateHash = currentState
 	}
 }
 
@@ -63,8 +67,8 @@ func (s *Server) Save(path string) error {
 }
 
 func (s *Server) Load(path string) error {
-	s.Lock()
-	defer s.Unlock()
+	// s.Lock()
+	// defer s.Unlock()
 
 	if len(s.Users) > 0 {
 		return errors.New("cannot load server state with connected users")
@@ -112,18 +116,23 @@ func (ucm ChanUserMap) MarshalJSON() ([]byte, error) {
 	if len(nicks) == 0 {
 		return []byte("[]"), nil
 	}
-
-	return json.Marshal(nicks)
-
-	for _, user := range ucm {
-		if user.Local() || user.Nick == "" {
-			continue
-		}
-		nicks = append(nicks, user.Nick)
-	}
+	// hashes are randomized; this should prevent the state-hash
+	// from jumping around
 	slices.Sort(nicks)
-	nicks = slices.Compact(nicks)
+
 	return json.Marshal(nicks)
+
+	/*
+		for _, user := range ucm {
+			if user.Local() || user.Nick == "" {
+				continue
+			}
+			nicks = append(nicks, user.Nick)
+		}
+		slices.Sort(nicks)
+		nicks = slices.Compact(nicks)
+		return json.Marshal(nicks)
+	*/
 }
 
 func (ucm *ChanUserMap) UnmarshalJSON(data []byte) error {

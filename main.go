@@ -3,9 +3,11 @@ package main
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 
 	"github.com/sparques/hamirc/irc"
 )
@@ -54,5 +56,24 @@ func main() {
 		log.Println(err)
 		return
 	}
+
+	// trap signals so we can gracefully exit
+	sig := make(chan os.Signal)
+	signal.Notify(sig, os.Interrupt, os.Kill)
+	go func() {
+		s := <-sig
+		server.Exit(fmt.Errorf("got %s signal", s))
+	}()
+
+	defer func() {
+		if *persist {
+			log.Printf("Performing final save...")
+			server.Save(*statefile)
+			// prevent any more changes
+			server.Lock()
+		}
+		log.Printf("TTYL")
+	}()
+
 	server.Serve(*serve)
 }

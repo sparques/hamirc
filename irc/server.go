@@ -66,6 +66,9 @@ func (s *Server) Serve(listenAddr string) error {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
+				if strings.HasSuffix(err.Error(), "use of closed network connection") {
+					return
+				}
 				log.Printf("Error accepting connection: %v\n", err)
 				continue
 			}
@@ -80,6 +83,7 @@ func (s *Server) Serve(listenAddr string) error {
 func (s *Server) Exit(err error) {
 	s.exitch <- err
 }
+
 func (s *Server) Channel(name string) *Channel {
 	s.Lock()
 	defer s.Unlock()

@@ -159,6 +159,10 @@ func (s *Server) handleTNC() {
 
 		log.Printf("<TNC> %v", args)
 
+		if len(args) < 2 {
+			continue
+		}
+
 		// only let PRIVMSG, NOTICE, and topic through
 		if !slices.Contains([]string{"PRIVMSG", "NOTICE", "TOPIC"}, args[1]) {
 			continue

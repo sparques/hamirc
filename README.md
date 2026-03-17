@@ -84,6 +84,6 @@ So better support of windows is where I could stand the most help if you're inte
 1. Do you think 1200 baud AFSK 1200/2200 is the right choice? 
 	- IRC messages are pretty short and there's no CRC or FEC in use. My intent is to use VHF and UHF, so the slower, typically used with VHF/UHF 1200 baud AFSK encoding makes sense to me.
 2. What frequency or frequencies should be standardized? 
-	- I've been testing via 145.5 MHz and no one's come on to blast me, so either my area's exceptionally quiet on this frequency or this is a good one to use. 
+	- I've been testing via 145.5 MHz and no one's come on to blast me, so either my area's exceptionally quiet on this frequency or this is a good one to use. I am in ITU Region 2 (North America) where digital communication is permitted on the simplex calling frequence (145.5MHz). Check your local band plan / country specific regulations to make sure you're staying legal.
 3. I don't think hamirc should be linked with any real, internet connected IRC servers. It may be okay to use with Internet-linked repeaters.
 	- If you disagree, please let me know why.

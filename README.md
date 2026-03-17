@@ -42,7 +42,8 @@ The TNC I use (and you should probably use as well) is Direwolf with a CM108-bas
 
 1. Download a hamirc release or compile for yourself.
 2. Get your radio and TNC ready.
-  - Set radio to 145.5MHz (NB: still figuring best frequency to use)
+  - If you're in ITU region 2, set radio to 145.5MHz (NB: still figuring best frequency to use)
+  	- Check your local band plan for the best frequency to use and coordinate with your fellow hams.
   - For direwolf, use the default options of 1200 baud AFSK 1200/2200
   - It's a fool's errand to rely on VOX for transmitting, be sure you have PTT ability with your TNC unless you just want to monitor.
 3. Start hamirc.

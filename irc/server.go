@@ -38,6 +38,7 @@ type Server struct {
 	// AutoJoin causes Local() users to automatically join channels they
 	// get messages for.
 	AutoJoin bool
+	Debug    bool
 	exitch   chan error
 	tnc      *kiss.TNC
 	tncport  int
@@ -91,6 +92,12 @@ func (s *Server) Serve(listenAddr string) error {
 
 func (s *Server) Exit(err error) {
 	s.exitch <- err
+}
+
+func (s *Server) debugf(format string, v ...any) {
+	if s.Debug {
+		log.Printf(format, v...)
+	}
 }
 
 func (s *Server) Channel(name string) *Channel {
@@ -202,7 +209,7 @@ func (s *Server) handleTNC() {
 		// replace \n just in case...
 		args := parse(strings.ReplaceAll(string(buf), "\n", " "))
 
-		log.Printf("<TNC> %v", args)
+		s.debugf("<TNC> %v", args)
 
 		if len(args) < 3 {
 			continue
@@ -321,8 +328,8 @@ func (s *Server) acceptUser(user *User) {
 		return
 	}
 	s.reply(user, RPL_WELCOME, user.Nick, "Connected.")
-	s.reply(user, RPL_YOURHOST, user.Nick, "Your host is an abomination.")
-	s.reply(user, RPL_CREATED, user.Nick, "Server was created within the last century.")
+	s.reply(user, RPL_YOURHOST, user.Nick, fmt.Sprintf("Your host is %s.", s.Name))
+	s.reply(user, RPL_CREATED, user.Nick, "Server is ready.")
 
 	log.Printf("Accepted user %s.\n", user.ID())
 	s.Lock()
@@ -364,13 +371,11 @@ func (s *Server) handleCommand(user *User, line string) (quit bool) {
 	}
 	command := strings.ToUpper(args[0])
 
-	//log.Printf("<%s@%s> %s\n", user.Nick, user.Conn.RemoteAddr(), line)
-
 	remoteAddr := "<unknown>"
 	if user.conn != nil {
 		remoteAddr = user.conn.RemoteAddr().String()
 	}
-	log.Printf("<%s@%s> %s\n", user.Nick, remoteAddr, args)
+	s.debugf("<%s@%s> %s", user.Nick, remoteAddr, args)
 	if user.Nick == "" {
 		switch command {
 		case "NICK", "USER", "CAP":
@@ -393,10 +398,11 @@ func (s *Server) reply(user *User, args ...string) {
 	if len(args) == 0 {
 		return
 	}
-	if len(args) > 1 {
-		args[len(args)-1] = ":" + args[len(args)-1]
+	lineArgs := append([]string(nil), args...)
+	if len(lineArgs) > 1 && !strings.HasPrefix(lineArgs[len(lineArgs)-1], ":") {
+		lineArgs[len(lineArgs)-1] = ":" + lineArgs[len(lineArgs)-1]
 	}
-	fmt.Fprintf(user, ":%s %s\r\n", s.Name, strings.Join(args, " "))
+	fmt.Fprintf(user, ":%s %s\r\n", s.Name, strings.Join(lineArgs, " "))
 }
 
 // changeNick changes a user's nickname
@@ -454,7 +460,7 @@ func (s *Server) listUsers(user *User, mask string) {
 			}
 		}
 	case mask == "*":
-		log.Printf("All users...")
+		s.debugf("Listing all users for %s", user.Nick)
 		for _, u := range s.Users {
 			fmt.Fprintf(user, ":%s 352 %s * %s * * %s %s :1 %s\n", s.Name, user.Nick, u.Callsign, u.Nick, u.Status(), u.RealName)
 		}
@@ -472,35 +478,45 @@ func (s *Server) listUsers(user *User, mask string) {
 
 func (s *Server) send(sender *User, cmd, target, msg string) {
 	s.Lock()
-	defer s.Unlock()
 
 	// update LastSeen
 	sender.LastSeen = time.Now()
+	senderID := sender.ID()
 
-	// Transmit message via radio
-	if sender.Local() {
-		fmt.Fprintf(s.tnc.Port(uint8(s.tncport)), ":%s %s %s :%s", sender.ID(), cmd, target, msg)
+	var tncWriter io.Writer
+	if sender.Local() && s.tnc != nil {
+		tncWriter = s.tnc.Port(uint8(s.tncport))
 	}
 
+	var recipients []*User
 	if strings.HasPrefix(target, "#") {
 		ch, ok := s.Channels[channelKey(target)]
 		if !ok {
+			s.Unlock()
 			return
 		}
 		for _, u := range ch.Users {
 			if u.Nick == sender.Nick && cmd != "PART" {
 				continue
 			}
-			fmt.Fprintf(u, ":%s %s %s :%s\n", sender.ID(), cmd, target, msg)
+			recipients = append(recipients, u)
 		}
+	} else if targetUser, ok := s.Users[nickKey(target)]; ok {
+		recipients = append(recipients, targetUser)
+	} else {
+		s.Unlock()
 		return
+	}
+	s.Unlock()
+
+	// Transmit local messages via radio after releasing the server lock.
+	if tncWriter != nil {
+		fmt.Fprintf(tncWriter, ":%s %s %s :%s", senderID, cmd, target, msg)
 	}
 
-	targetUser, ok := s.Users[nickKey(target)]
-	if !ok {
-		return
+	for _, recipient := range recipients {
+		fmt.Fprintf(recipient, ":%s %s %s :%s\n", senderID, cmd, target, msg)
 	}
-	fmt.Fprintf(targetUser, ":%s %s %s :%s\n", sender.ID(), cmd, target, msg)
 }
 
 func (s *Server) Notice(sender *User, target string, msg string) {
@@ -520,25 +536,32 @@ func (s *Server) joinChannel(user *User, channelName string) {
 		channel = NewChannel(channelName)
 		s.Channels[key] = channel
 	}
-	channel.Lock()
 	channel.Users[nickKey(user.Nick)] = user
-	channel.Unlock()
 
+	recipients := make([]*User, 0, len(channel.Users))
+	names := make([]string, 0, len(channel.Users))
 	for _, u := range channel.Users {
-		fmt.Fprintf(u, ":%s JOIN :%s\r\n", user.ID(), channelName)
+		recipients = append(recipients, u)
+		names = append(names, u.Nick)
 	}
+	topic := channel.Topic
 	s.Unlock()
 
-	if channel.Topic == "" {
-		s.reply(user, RPL_NOTOPIC, s.Name, channelName, "No topic is set")
+	userID := user.ID()
+	for _, recipient := range recipients {
+		fmt.Fprintf(recipient, ":%s JOIN :%s\r\n", userID, channelName)
+	}
+
+	if topic == "" {
+		s.reply(user, RPL_NOTOPIC, user.Nick, channelName, "No topic is set")
 	} else {
-		s.reply(user, RPL_TOPIC, s.Name, channelName, channel.Topic)
+		s.reply(user, RPL_TOPIC, user.Nick, channelName, topic)
 	}
 
 	fmt.Fprintf(user, ":%s 353 %s = %s :", s.Name, user.Nick, channelName)
 
-	for _, u := range channel.Users {
-		fmt.Fprintf(user, "%s ", u.Nick)
+	for _, name := range names {
+		fmt.Fprintf(user, "%s ", name)
 	}
 	fmt.Fprintf(user, "\r\n")
 	s.reply(user, RPL_ENDOFNAMES, user.Nick, channelName, "End of /NAMES list")
@@ -589,7 +612,7 @@ func (s *Server) topic(user *User, channel string) {
 	}
 
 	if ch.Topic == "" {
-		s.reply(user, RPL_NOTOPIC, s.Name, ch.Name, "No topic is set")
+		s.reply(user, RPL_NOTOPIC, user.Nick, ch.Name, "No topic is set")
 	} else {
 		s.reply(user, RPL_TOPIC, user.Nick, ch.Name, ch.Topic)
 		s.reply(user, RPL_TOPICWHOTIME, user.Nick, ch.Name, ch.TopicWho, strconv.Itoa(int(ch.TopicTime.Unix())))
@@ -599,7 +622,7 @@ func (s *Server) topic(user *User, channel string) {
 func (s *Server) listChannels(user *User) {
 	s.Lock()
 	defer s.Unlock()
-	// we don't support filters or anything because why bother
+	// LIST filters are intentionally ignored for now.
 	s.reply(user, RPL_LISTSTART, "Channel", "Users Name")
 	for _, ch := range s.Channels {
 		s.reply(user, RPL_LIST, user.Nick, ch.Name, strconv.Itoa(len(ch.Users)), ch.Topic)
@@ -620,19 +643,33 @@ func (s *Server) whois(user *User, nickList string) {
 }
 
 func (s *Server) setTopic(user *User, ch *Channel, topic string) {
+	if ch == nil {
+		return
+	}
 	s.Lock()
-	defer s.Unlock()
 
 	ch.Topic = topic
 	ch.TopicWho = user.Nick
 	ch.TopicTime = time.Now()
 
+	recipients := make([]*User, 0, len(ch.Users))
 	for _, u := range ch.Users {
-		s.reply(u, RPL_TOPIC, u.Nick, ch.Name, ch.Topic)
+		recipients = append(recipients, u)
+	}
+	chName := ch.Name
+	userID := user.ID()
+	var tncWriter io.Writer
+	if user.Local() && s.tnc != nil {
+		tncWriter = s.tnc.Port(uint8(s.tncport))
+	}
+	s.Unlock()
+
+	for _, recipient := range recipients {
+		s.reply(recipient, RPL_TOPIC, recipient.Nick, chName, topic)
 	}
 
 	// also push out topic change
-	if user.Local() {
-		fmt.Fprintf(s.tnc.Port(uint8(s.tncport)), ":%s %s %s :%s", user.ID(), "TOPIC", ch.Name, ch.Topic)
+	if tncWriter != nil {
+		fmt.Fprintf(tncWriter, ":%s %s %s :%s", userID, "TOPIC", chName, topic)
 	}
 }

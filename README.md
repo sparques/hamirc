@@ -54,6 +54,20 @@ The TNC I use (and you should probably use as well) is Direwolf with a CM108-bas
   - Connect to localhost:6667
 5. You should be good to go.
 
+## Runtime Options
+
+Common options:
+
+- `-tnc`: KISS TNC address. Defaults to `:8001`. Use `/dev/path:baud` for a serial device.
+- `-tncport`: KISS TNC port, `0` through `7`. Defaults to `0`.
+- `-serve`: IRC listen address. Defaults to `:6667`.
+- `-name`: server name sent to IRC clients. Defaults to `hamirc`.
+- `-state`: server state file path. Defaults to `serverState.json`.
+- `-persist`: load and save users, channels, and topics. Defaults to `true`.
+- `-mustload`: exit if an existing state file cannot be loaded. Defaults to `true`.
+- `-autojoin`: automatically join local users to channels heard over radio. Defaults to `true`.
+- `-debug`: log raw IRC and TNC traffic. Defaults to `false`.
+
 The default behavior is to automatically add all "local users" (that is, users connected via an IRC client on the localhost) to any channel for which a message is received. 
 
 This feature, AutoJoin, can be disabled and hamirc will still track channels in the background for which it has received a message. These channels can be viewed with the standard IRC /LIST command. Chances are traffic will be light enough it's best to leave AutoJoin on so you can see what's going on.

@@ -40,15 +40,20 @@ func (u *User) Write(buf []byte) (n int, err error) {
 		if i == -1 {
 			n2, err = u.buf.Write(buf)
 			n += n2
-			return
+			return n, err
 		}
 		n2, err = u.buf.Write(buf[:i+1])
 		n += n2
-		u.buf.Flush()
+		if err != nil {
+			return n, err
+		}
+		if err := u.buf.Flush(); err != nil {
+			return n, err
+		}
 		buf = buf[i+1:]
 	}
 
-	return len(buf), nil
+	return n, nil
 }
 
 // ID generates a user id in the form of <nick>!<user>@<Real Name>. ID converts spaces to underscores
@@ -63,10 +68,8 @@ func (u *User) ID() string {
 // host field to store the Real Name. When we encode a user identifier via the ID()
 // method, spaces are converted to underscores.
 func (u *User) Parse(id string) {
-	// We could do more rigorous nick/id RFC-compliance checking with, perhaps, a regex.
-	// But why bother?
-
-	//fmt.Sscanf(id, "%s!%s@%s", &u.Nick, &u.Callsign, &u.RealName)
+	// More rigorous nick/id validation can be added if malformed traffic
+	// becomes a practical issue.
 	fields := strings.FieldsFunc(id, func(r rune) bool {
 		if r == '!' || r == '@' {
 			return true

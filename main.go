@@ -22,6 +22,7 @@ var (
 	mustload  = flag.Bool("mustload", true, "if true, loading the state must succeed or program will exit; this is to prevent a server state file from being overwritten by an empty server state.")
 	autojoin  = flag.Bool("autojoin", true, "if true, will cause local users (those connected via TCP) to automatically join any channels that receive a message")
 	tncport   = flag.Int("tncport", 0, "the TNC port to use; valid options: 0-7;")
+	debug     = flag.Bool("debug", false, "if true, log raw IRC and TNC traffic")
 )
 
 func main() {
@@ -40,6 +41,7 @@ func main() {
 	}
 	// Automatically have local users join any newly seen channels
 	server.AutoJoin = *autojoin
+	server.Debug = *debug
 	server.Name = *name
 	server.MOTD = func() string {
 		cmd := exec.Command("fortune")
@@ -48,7 +50,7 @@ func main() {
 		}
 		out, err := cmd.Output()
 		if err != nil {
-			return "I can't believe you've done this."
+			return "No message of the day is available."
 		}
 		return string(out)
 	}

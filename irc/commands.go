@@ -126,7 +126,6 @@ func ping(s *Server, user *User, args []string) (quit bool) {
 }
 
 func pong(s *Server, user *User, args []string) (quit bool) {
-	//meh
 	return
 }
 

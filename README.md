@@ -34,7 +34,7 @@ Here's the setup:
 
 	[IRC Client of your Choice] <--> [hamirc] <--> [TNC] <--> [Ham Radio]
 
-The TNC I use (and you should probably use as well) is Direwolf with a CM108-based USB soundcard, modified to have PTT capability.
+The TNC I use (and you should probably use as well) is [Direwolf](https://github.com/wb2osz/direwolf) with a CM108-based USB soundcard, modified to have PTT capability. There are of course other options, like [modem73](https://github.com/RFnexus/modem73).
 
 ### Protocol
 

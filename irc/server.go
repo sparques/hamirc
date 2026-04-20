@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sparques/hamirc/kiss"
+	"go.bug.st/serial"
 )
 
 type UserMap map[string]*User
@@ -111,9 +112,29 @@ func parse(line string) []string {
 	return args
 }
 
-// ConnectTNC connects to a TNC (let's be honest here, it's direwolf) via
-// tcp.
-func (s *Server) ConnectTNC(addr string, tncport int) error {
+// ConnectTNC connects to a TNC via tcp or serial.
+func (s *Server) ConnectTNC(addr string, tncport int) (err error) {
+	if strings.HasPrefix(addr, "/dev/") {
+		mode := &serial.Mode{
+			BaudRate: 115200,
+		}
+		parts := strings.Split(addr, ":")
+		if len(parts) == 2 {
+			mode.BaudRate, err = strconv.Atoi(parts[1])
+			if err != nil {
+				return fmt.Errorf("could not extract baudrate from addr: %w", err)
+			}
+		}
+
+		port, err := serial.Open(parts[0], mode)
+		if err != nil {
+			return fmt.Errorf("could not open serial port for kiss tnc: %w", err)
+		}
+		log.Printf("Connected to TNC port %d at %s, %d baud", tncport, parts[0], mode.BaudRate)
+		s.tnc = kiss.NewTNC(port)
+		s.tncport = tncport
+		return nil
+	}
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("could not connect to kiss tnc: %w", err)

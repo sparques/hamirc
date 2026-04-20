@@ -28,7 +28,8 @@ var (
 // Package function can change the destination.
 
 type TNC struct {
-	ports [8]port
+	ports  [8]port
+	closed bool
 }
 
 type port struct {
@@ -67,6 +68,8 @@ func (t *TNC) router(rd io.Reader) {
 	for i := range t.ports {
 		close(t.ports[i].queue)
 	}
+
+	t.closed = true
 }
 
 func (t *TNC) enqueue(port uint8, data []byte) {
@@ -77,6 +80,10 @@ func (t *TNC) enqueue(port uint8, data []byte) {
 	}
 
 	t.ports[port].queue <- data
+}
+
+func (t *TNC) IsClosed() bool {
+	return t.closed
 }
 
 func (t *TNC) Port(n uint8) *port {

@@ -30,10 +30,6 @@ var cmdSet = map[string]serverCommand{
 func capabilities(s *Server, user *User, args []string) (quit bool) {
 	// We don't support much...
 	s.reply(user, "CAP", "*", "LS", "")
-	//410 * FOO :Invalid CAP command
-	// if len(args) > 1 {
-	// s.reply(user, "410", "*", args[1], "Incapable server")
-	// }
 	return
 }
 
@@ -62,11 +58,11 @@ func nick(s *Server, user *User, args []string) (quit bool) {
 func user(s *Server, user *User, args []string) (quit bool) {
 	// after we get a USER, send the welcome wagon
 	if user.Callsign != "" {
-		s.reply(user, ERR_ALREADYREGISTERED, "You may not reregister")
+		s.reply(user, ERR_ALREADYREGISTERED, replyNick(user), "You may not reregister")
 		return
 	}
 	if len(args) != 5 {
-		s.reply(user, ERR_NEEDMOREPARAMS, "Need more params for USER")
+		s.reply(user, ERR_NEEDMOREPARAMS, replyNick(user), "USER", "Need more params")
 		return
 	}
 	user.Callsign = args[1]
@@ -79,7 +75,7 @@ func user(s *Server, user *User, args []string) (quit bool) {
 
 func join(s *Server, user *User, args []string) (quit bool) {
 	if len(args) != 2 {
-		s.reply(user, ERR_NEEDMOREPARAMS, user.Nick, "Not enough parameters")
+		s.reply(user, ERR_NEEDMOREPARAMS, replyNick(user), "JOIN", "Not enough parameters")
 		return
 	}
 	for _, ch := range strings.Split(args[1], ",") {
@@ -95,12 +91,13 @@ func who(s *Server, user *User, args []string) (quit bool) {
 	}
 	// list users according to mask
 	s.listUsers(user, mask)
+	s.reply(user, RPL_ENDOFWHO, user.Nick, mask, "End of /WHO list")
 	return
 }
 
 func notice(s *Server, user *User, args []string) (quit bool) {
 	if len(args) < 3 {
-		s.reply(user, ERR_NEEDMOREPARAMS, user.Nick, "Not enough parameters")
+		s.reply(user, ERR_NEEDMOREPARAMS, replyNick(user), "NOTICE", "Not enough parameters")
 		return
 	}
 	s.send(user, "NOTICE", args[1], args[2])
@@ -109,7 +106,7 @@ func notice(s *Server, user *User, args []string) (quit bool) {
 
 func privmsg(s *Server, user *User, args []string) (quit bool) {
 	if len(args) < 3 {
-		s.reply(user, ERR_NEEDMOREPARAMS, user.Nick, "Not enough parameters")
+		s.reply(user, ERR_NEEDMOREPARAMS, replyNick(user), "PRIVMSG", "Not enough parameters")
 		return
 	}
 	s.send(user, "PRIVMSG", args[1], args[2])
@@ -138,7 +135,7 @@ func userhost(s *Server, user *User, args []string) (quit bool) {
 
 func whois(s *Server, user *User, args []string) (quit bool) {
 	if len(args) == 1 {
-		s.reply(user, ERR_NONICKNAMEGIVEN, user.Nick, "No nickname given")
+		s.reply(user, ERR_NONICKNAMEGIVEN, replyNick(user), "No nickname given")
 		return
 	}
 	s.whois(user, args[1])
@@ -153,7 +150,7 @@ func list(s *Server, user *User, args []string) (quit bool) {
 
 func topic(s *Server, user *User, args []string) (quit bool) {
 	if len(args) < 2 {
-		s.reply(user, ERR_NEEDMOREPARAMS, user.Nick, "TOPIC requires 2 or more params")
+		s.reply(user, ERR_NEEDMOREPARAMS, replyNick(user), "TOPIC", "Not enough parameters")
 		return
 	}
 	s.Lock()
@@ -173,10 +170,18 @@ func topic(s *Server, user *User, args []string) (quit bool) {
 
 func mode(s *Server, user *User, args []string) (quit bool) {
 	if len(args) < 2 {
-		s.reply(user, ERR_NEEDMOREPARAMS, user.Nick, "Not enough parameters")
+		s.reply(user, ERR_NEEDMOREPARAMS, replyNick(user), "MODE", "Not enough parameters")
 		return
 	}
-	s.reply(user, ERR_UNKNOWNMODE, args[1], "Server doesn't support modes")
+	if strings.HasPrefix(args[1], "#") && len(args) == 2 {
+		s.reply(user, RPL_CHANNELMODEIS, user.Nick, args[1], "+")
+		return
+	}
+	mode := args[1]
+	if len(args) > 2 {
+		mode = args[2]
+	}
+	s.reply(user, ERR_UNKNOWNMODE, replyNick(user), mode, "Server doesn't support modes")
 	return
 }
 
@@ -187,7 +192,7 @@ func motd(s *Server, user *User, args []string) (quit bool) {
 
 func part(s *Server, user *User, args []string) (quit bool) {
 	if len(args) == 1 {
-		s.reply(user, ERR_NEEDMOREPARAMS, user.Nick, "PART requires 1 or more params")
+		s.reply(user, ERR_NEEDMOREPARAMS, replyNick(user), "PART", "Not enough parameters")
 		return
 	}
 

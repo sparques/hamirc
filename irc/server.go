@@ -102,6 +102,13 @@ func (s *Server) debugf(format string, v ...any) {
 	}
 }
 
+func replyNick(user *User) string {
+	if user.Nick == "" {
+		return "*"
+	}
+	return user.Nick
+}
+
 func (s *Server) Channel(name string) *Channel {
 	s.Lock()
 	defer s.Unlock()
@@ -426,7 +433,7 @@ func (s *Server) PingPong() {
 		s.Lock()
 		for _, user := range s.Users {
 			if user.Local() {
-				fmt.Fprintf(user, "PING :LAG%d\n", time.Now().Unix())
+				fmt.Fprintf(user, "PING :LAG%d\r\n", time.Now().Unix())
 			}
 		}
 		s.Unlock()
@@ -450,7 +457,7 @@ func (s *Server) handleCommand(user *User, line string) (quit bool) {
 		switch command {
 		case "NICK", "USER", "CAP":
 		default:
-			s.reply(user, ERR_NOTREGISTERED, "*", command, "You have not registered")
+			s.reply(user, ERR_NOTREGISTERED, replyNick(user), command, "You have not registered")
 			return
 		}
 	}
@@ -458,7 +465,7 @@ func (s *Server) handleCommand(user *User, line string) (quit bool) {
 	if cmdFunc, ok := cmdSet[command]; ok {
 		return cmdFunc(s, user, args)
 	} else {
-		s.reply(user, ERR_UNKNOWNCOMMAND, user.Nick, command, "Unknown command")
+		s.reply(user, ERR_UNKNOWNCOMMAND, replyNick(user), command, "Unknown command")
 	}
 
 	return
@@ -478,7 +485,6 @@ func (s *Server) reply(user *User, args ...string) {
 // changeNick changes a user's nickname
 func (s *Server) changeNick(user *User, newNick string) {
 	s.Lock()
-	defer s.Unlock()
 
 	newNickLower := nickKey(newNick)
 	oldNickLower := nickKey(user.Nick)
@@ -487,13 +493,15 @@ func (s *Server) changeNick(user *User, newNick string) {
 	// allow person to snag a remote user though
 	existingUser, ok := s.Users[newNickLower]
 	if ok && existingUser.Local() {
-		s.reply(user, ERR_NICKNAMEINUSE, user.Nick, newNick, "Nickname is already in use")
+		s.Unlock()
+		s.reply(user, ERR_NICKNAMEINUSE, replyNick(user), newNick, "Nickname is already in use")
 		return
 	}
 
 	// Update the server's user list
 	oldNick := user.Nick
 	user.Nick = newNick
+	var recipients []*User
 	if oldNickLower != "" {
 		delete(s.Users, oldNickLower)
 		s.Users[newNickLower] = user
@@ -505,14 +513,33 @@ func (s *Server) changeNick(user *User, newNick string) {
 		if _, ok := ch.Users[oldNickLower]; ok {
 			ch.Users[newNickLower] = user
 			delete(ch.Users, oldNickLower)
+			for _, chUser := range ch.Users {
+				recipients = append(recipients, chUser)
+			}
 		}
 	}
+	s.Unlock()
 
 	if oldNick == "" {
-		oldNick = newNick
+		return
 	}
 
-	fmt.Fprintf(user, ":%s NICK :%s\r\n", oldNick, newNick)
+	for _, recipient := range uniqueUsers(recipients) {
+		fmt.Fprintf(recipient, ":%s NICK :%s\r\n", oldNick, newNick)
+	}
+}
+
+func uniqueUsers(users []*User) []*User {
+	seen := make(map[*User]struct{}, len(users))
+	unique := make([]*User, 0, len(users))
+	for _, user := range users {
+		if _, ok := seen[user]; ok {
+			continue
+		}
+		seen[user] = struct{}{}
+		unique = append(unique, user)
+	}
+	return unique
 }
 
 func (s *Server) listUsers(user *User, mask string) {
@@ -526,20 +553,20 @@ func (s *Server) listUsers(user *User, mask string) {
 	case strings.HasPrefix(mask, "#"):
 		if ch, ok := s.Channels[channelKey(mask)]; ok {
 			for _, u := range ch.Users {
-				fmt.Fprintf(user, ":%s 352 %s %s %s * * %s %s :1 %s\n", s.Name, user.Nick, ch.Name, u.Callsign, u.Nick, u.Status(), u.RealName)
+				fmt.Fprintf(user, ":%s 352 %s %s %s * * %s %s :1 %s\r\n", s.Name, user.Nick, ch.Name, u.Callsign, u.Nick, u.Status(), u.RealName)
 			}
 		}
 	case mask == "*":
 		s.debugf("Listing all users for %s", user.Nick)
 		for _, u := range s.Users {
-			fmt.Fprintf(user, ":%s 352 %s * %s * * %s %s :1 %s\n", s.Name, user.Nick, u.Callsign, u.Nick, u.Status(), u.RealName)
+			fmt.Fprintf(user, ":%s 352 %s * %s * * %s %s :1 %s\r\n", s.Name, user.Nick, u.Callsign, u.Nick, u.Status(), u.RealName)
 		}
 	default:
 		// treat as user
 		for _, u := range s.Users {
 			if u.ID() == mask || u.Nick == mask {
 				// server caller channel user host server nick status :hopcount realname
-				fmt.Fprintf(user, ":%s 352 %s * %s * * %s %s :1 %s\n", s.Name, user.Nick, u.Callsign, u.Nick, u.Status(), u.RealName)
+				fmt.Fprintf(user, ":%s 352 %s * %s * * %s %s :1 %s\r\n", s.Name, user.Nick, u.Callsign, u.Nick, u.Status(), u.RealName)
 				return
 			}
 		}
@@ -585,7 +612,7 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 	}
 
 	for _, recipient := range recipients {
-		fmt.Fprintf(recipient, ":%s %s %s :%s\n", senderID, cmd, target, msg)
+		fmt.Fprintf(recipient, ":%s %s %s :%s\r\n", senderID, cmd, target, msg)
 	}
 }
 
@@ -691,25 +718,30 @@ func (s *Server) topic(user *User, channel string) {
 
 func (s *Server) listChannels(user *User) {
 	s.Lock()
-	defer s.Unlock()
-	// LIST filters are intentionally ignored for now.
-	s.reply(user, RPL_LISTSTART, "Channel", "Users Name")
+	channels := make([]*Channel, 0, len(s.Channels))
 	for _, ch := range s.Channels {
+		channels = append(channels, ch)
+	}
+	s.Unlock()
+
+	// LIST filters are intentionally ignored for now.
+	s.reply(user, RPL_LISTSTART, user.Nick, "Channel", "Users Name")
+	for _, ch := range channels {
 		s.reply(user, RPL_LIST, user.Nick, ch.Name, strconv.Itoa(len(ch.Users)), ch.Topic)
 	}
-	s.reply(user, RPL_LISTEND, "End of /LIST")
+	s.reply(user, RPL_LISTEND, user.Nick, "End of /LIST")
 }
 
 func (s *Server) whois(user *User, nickList string) {
 	for _, nick := range strings.Split(nickList, ",") {
 		u := s.Nick(nick)
 		if u == nil {
-			s.reply(user, ERR_NOSUCHNICK, nick, ":No such nick")
+			s.reply(user, ERR_NOSUCHNICK, user.Nick, nick, "No such nick")
 			continue
 		}
 		s.reply(user, RPL_WHOISUSER, user.Nick, u.Nick, u.Callsign, "*", u.RealName)
 	}
-	s.reply(user, RPL_ENDOFWHOIS, nickList, "End of /WHOIS list")
+	s.reply(user, RPL_ENDOFWHOIS, user.Nick, nickList, "End of /WHOIS list")
 }
 
 func (s *Server) setTopic(user *User, ch *Channel, topic string) {

@@ -59,6 +59,9 @@ func (t *TNC) router(rd io.Reader) {
 	for scanner.Scan() {
 		// we have a frame in scanner.Bytes()
 		frame := scanner.Bytes()
+		if len(frame) == 0 {
+			continue
+		}
 		port := frame[0] >> 4 // will definitely be < 8
 		t.enqueue(port, frame[1:])
 	}
@@ -101,11 +104,15 @@ func (p *port) Read(data []byte) (n int, err error) {
 }
 
 func (p *port) Write(data []byte) (n int, err error) {
-	_, err = p.rw.Write(FrameEncode(p.id<<4, data))
+	frame := FrameEncode(p.id<<4, data)
+	written, err := p.rw.Write(frame)
 	if err != nil {
-		n = len(data)
+		return 0, err
 	}
-	return
+	if written != len(frame) {
+		return 0, io.ErrShortWrite
+	}
+	return len(data), nil
 }
 
 func (p *port) free() int {
@@ -114,7 +121,7 @@ func (p *port) free() int {
 
 func FrameEncode(portCmd byte, data []byte) []byte {
 	// if we have no escaped bytes, len(data)+3 is spot on
-	buf := bytes.NewBuffer(make([]byte, len(data)+3))
+	buf := bytes.NewBuffer(make([]byte, 0, len(data)+3))
 	buf.WriteByte(FEND)
 	buf.WriteByte(portCmd)
 	for i := range len(data) {

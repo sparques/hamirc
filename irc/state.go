@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -51,15 +52,25 @@ func (s *Server) PersistState(path string) {
 func (s *Server) Save(path string) error {
 	s.Lock()
 	defer s.Unlock()
-	fh, err := os.Create(path)
+
+	dir := filepath.Dir(path)
+	fh, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return err
 	}
-	defer fh.Close()
+	tmpPath := fh.Name()
+	defer os.Remove(tmpPath)
+
 	enc := json.NewEncoder(fh)
 	enc.SetIndent("", "  ")
-	err = enc.Encode(s)
-	if err != nil {
+	if err := enc.Encode(s); err != nil {
+		fh.Close()
+		return err
+	}
+	if err := fh.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
 		return err
 	}
 
@@ -76,13 +87,16 @@ func (s *Server) Load(path string) error {
 
 	fh, err := os.Open(path)
 	if err != nil {
-		return nil
+		return err
 	}
 	defer fh.Close()
 	dec := json.NewDecoder(fh)
 	err = dec.Decode(s)
 	if err != nil {
 		return err
+	}
+	if s.Mutex == nil {
+		s.Mutex = &sync.Mutex{}
 	}
 	// cycle through Users, set their non-exported fields
 	for _, user := range s.Users {
@@ -100,7 +114,11 @@ func (s *Server) Load(path string) error {
 				delete(ch.Users, tmpNick)
 				continue
 			}
-			ch.Users[strings.ToLower(actualUser.Nick)] = actualUser
+			actualNick := strings.ToLower(actualUser.Nick)
+			ch.Users[actualNick] = actualUser
+			if tmpNick != actualNick {
+				delete(ch.Users, tmpNick)
+			}
 		}
 	}
 	return nil

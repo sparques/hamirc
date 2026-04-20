@@ -180,7 +180,7 @@ func (s *Server) handleTNC() {
 
 		log.Printf("<TNC> %v", args)
 
-		if len(args) < 2 {
+		if len(args) < 3 {
 			continue
 		}
 
@@ -198,7 +198,13 @@ func (s *Server) handleTNC() {
 		}
 		// add user to server if not previously seen
 		if existingUser := s.Nick(incomingUser.Nick); existingUser == nil {
-			s.Users[strings.ToLower(incomingUser.Nick)] = incomingUser
+			s.Lock()
+			if existingUser = s.Users[strings.ToLower(incomingUser.Nick)]; existingUser == nil {
+				s.Users[strings.ToLower(incomingUser.Nick)] = incomingUser
+			} else {
+				incomingUser = existingUser
+			}
+			s.Unlock()
 		} else {
 			incomingUser = existingUser
 		}
@@ -216,11 +222,17 @@ func (s *Server) handleTNC() {
 			}
 
 			if s.AutoJoin {
+				var usersToJoin []*User
+				s.Lock()
 				for _, u := range s.Users {
-					_, ok := ch.Users[u.Nick]
+					_, ok := ch.Users[strings.ToLower(u.Nick)]
 					if u.Local() && !ok {
-						s.joinChannel(u, args[2])
+						usersToJoin = append(usersToJoin, u)
 					}
+				}
+				s.Unlock()
+				for _, u := range usersToJoin {
+					s.joinChannel(u, args[2])
 				}
 			}
 		}
@@ -228,6 +240,9 @@ func (s *Server) handleTNC() {
 		if args[1] == "TOPIC" {
 			s.setTopic(incomingUser, s.Channel(args[2]), strings.Join(args[3:], " "))
 		} else {
+			if len(args) < 4 {
+				continue
+			}
 			s.send(incomingUser, args[1], args[2], args[3])
 		}
 	}
@@ -255,16 +270,15 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	// Handle commands
 	for scanner.Scan() {
-		if scanner.Err() != nil {
-			log.Printf("<%s@%s> Disconnected\n", user.ID(), conn.RemoteAddr())
-			s.removeUser(user)
-			return
-		}
 		if s.handleCommand(user, strings.TrimSpace(scanner.Text())) {
 			s.removeUser(user)
 			return
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("<%s@%s> Disconnected: %s\n", user.ID(), conn.RemoteAddr(), err)
+	}
+	s.removeUser(user)
 }
 
 func (s *Server) removeUser(user *User) {
@@ -274,7 +288,7 @@ func (s *Server) removeUser(user *User) {
 	delete(s.Users, strings.ToLower(user.Nick))
 	for _, ch := range s.Channels {
 		// need to add quit message
-		delete(ch.Users, user.Nick)
+		delete(ch.Users, strings.ToLower(user.Nick))
 	}
 }
 
@@ -373,6 +387,12 @@ func (s *Server) changeNick(user *User, newNick string) {
 	// Update the server's user list
 	oldNick := user.Nick
 	user.Nick = newNick
+	if oldNickLower != "" {
+		delete(s.Users, oldNickLower)
+		s.Users[newNickLower] = user
+	} else if user.Callsign != "" {
+		s.Users[newNickLower] = user
+	}
 
 	for _, ch := range s.Channels {
 		if _, ok := ch.Users[oldNickLower]; ok {
@@ -511,11 +531,16 @@ func (s *Server) userHost(user *User, nicks []string) {
 
 func (s *Server) quit(user *User, reason string) {
 	s.Lock()
-	defer s.Unlock()
+	channels := make([]string, 0, len(s.Channels))
 	for _, ch := range s.Channels {
 		if _, ok := ch.Users[strings.ToLower(user.Nick)]; ok {
-			s.send(user, "QUIT", ch.Name, reason)
+			channels = append(channels, ch.Name)
 		}
+	}
+	s.Unlock()
+
+	for _, channel := range channels {
+		s.send(user, "QUIT", channel, reason)
 	}
 }
 

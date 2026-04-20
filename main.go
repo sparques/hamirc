@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"syscall"
 
 	"github.com/sparques/hamirc/irc"
 )
@@ -58,8 +59,9 @@ func main() {
 	}
 
 	// trap signals so we can gracefully exit
-	sig := make(chan os.Signal)
-	signal.Notify(sig, os.Interrupt, os.Kill)
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sig)
 	go func() {
 		s := <-sig
 		server.Exit(fmt.Errorf("got %s signal", s))
@@ -68,12 +70,14 @@ func main() {
 	defer func() {
 		if *persist {
 			log.Printf("Performing final save...")
-			server.Save(*statefile)
-			// prevent any more changes
-			server.Lock()
+			if err := server.Save(*statefile); err != nil {
+				log.Printf("Error performing final save: %s", err)
+			}
 		}
 		log.Printf("TTYL")
 	}()
 
-	server.Serve(*serve)
+	if err := server.Serve(*serve); err != nil {
+		log.Println(err)
+	}
 }

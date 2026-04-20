@@ -39,11 +39,18 @@ func capabilities(s *Server, user *User, args []string) (quit bool) {
 
 func echo(s *Server, user *User, args []string) (quit bool) {
 	// send whatever the user has sent back to the user
+	if len(args) == 1 {
+		return
+	}
 	s.reply(user, args[1:]...)
 	return
 }
 
 func nick(s *Server, user *User, args []string) (quit bool) {
+	if len(args) < 2 || args[1] == "" {
+		s.reply(user, ERR_NONICKNAMEGIVEN, user.Nick, "No nickname given")
+		return
+	}
 	oldNick := user.Nick
 	s.changeNick(user, args[1])
 	if oldNick == "" && user.Callsign != "" {
@@ -92,7 +99,7 @@ func who(s *Server, user *User, args []string) (quit bool) {
 }
 
 func notice(s *Server, user *User, args []string) (quit bool) {
-	if len(args) < 2 {
+	if len(args) < 3 {
 		s.reply(user, ERR_NEEDMOREPARAMS, user.Nick, "Not enough parameters")
 		return
 	}
@@ -101,7 +108,7 @@ func notice(s *Server, user *User, args []string) (quit bool) {
 }
 
 func privmsg(s *Server, user *User, args []string) (quit bool) {
-	if len(args) < 2 {
+	if len(args) < 3 {
 		s.reply(user, ERR_NEEDMOREPARAMS, user.Nick, "Not enough parameters")
 		return
 	}
@@ -164,6 +171,10 @@ func topic(s *Server, user *User, args []string) (quit bool) {
 }
 
 func mode(s *Server, user *User, args []string) (quit bool) {
+	if len(args) < 2 {
+		s.reply(user, ERR_NEEDMOREPARAMS, user.Nick, "Not enough parameters")
+		return
+	}
 	s.reply(user, ERR_UNKNOWNMODE, args[1], "Server doesn't support modes")
 	return
 }
@@ -174,8 +185,6 @@ func motd(s *Server, user *User, args []string) (quit bool) {
 }
 
 func part(s *Server, user *User, args []string) (quit bool) {
-	s.Lock()
-	defer s.Unlock()
 	if len(args) == 1 {
 		s.reply(user, ERR_NEEDMOREPARAMS, user.Nick, "PART requires 1 or more params")
 		return
@@ -186,20 +195,27 @@ func part(s *Server, user *User, args []string) (quit bool) {
 		reason = args[2]
 	}
 	for _, chName := range strings.Split(args[1], ",") {
+		s.Lock()
 		ch, ok := s.Channels[chName]
 		if !ok {
+			s.Unlock()
 			s.reply(user, ERR_NOSUCHCHANNEL, user.Nick, chName, "no such channel")
 			continue
 
 		}
 
-		if ch.Nick(user.Nick) == nil {
+		if _, ok := ch.Users[strings.ToLower(user.Nick)]; !ok {
+			s.Unlock()
 			s.reply(user, ERR_NOTONCHANNEL, user.Nick, chName, "you're not in that channel")
 			continue
 		}
+		s.Unlock()
 
 		s.send(user, "PART", chName, reason)
-		delete(ch.Users, user.Nick)
+
+		s.Lock()
+		delete(ch.Users, strings.ToLower(user.Nick))
+		s.Unlock()
 	}
 	return
 }

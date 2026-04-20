@@ -20,6 +20,8 @@ import (
 
 type UserMap map[string]*User
 
+const defaultTNCBaud = 115200
+
 func nickKey(nick string) string {
 	return strings.ToLower(nick)
 }
@@ -146,23 +148,20 @@ func parse(line string) []string {
 
 // ConnectTNC connects to a TNC via tcp or serial.
 func (s *Server) ConnectTNC(addr string, tncport int) (err error) {
-	if strings.HasPrefix(addr, "/dev/") {
+	serialAddr, baud, isSerial, err := parseSerialTNCAddress(addr)
+	if err != nil {
+		return err
+	}
+	if isSerial {
 		mode := &serial.Mode{
-			BaudRate: 115200,
-		}
-		parts := strings.Split(addr, ":")
-		if len(parts) == 2 {
-			mode.BaudRate, err = strconv.Atoi(parts[1])
-			if err != nil {
-				return fmt.Errorf("could not extract baudrate from addr: %w", err)
-			}
+			BaudRate: baud,
 		}
 
-		port, err := serial.Open(parts[0], mode)
+		port, err := serial.Open(serialAddr, mode)
 		if err != nil {
 			return fmt.Errorf("could not open serial port for kiss tnc: %w", err)
 		}
-		log.Printf("Connected to TNC port %d at %s, %d baud", tncport, parts[0], mode.BaudRate)
+		log.Printf("Connected to TNC port %d at %s, %d baud", tncport, serialAddr, mode.BaudRate)
 		s.tnc = kiss.NewTNC(port)
 		s.tncport = tncport
 		return nil
@@ -175,6 +174,77 @@ func (s *Server) ConnectTNC(addr string, tncport int) (err error) {
 	s.tnc = kiss.NewTNC(conn)
 	s.tncport = tncport
 	return nil
+}
+
+func parseSerialTNCAddress(addr string) (port string, baud int, ok bool, err error) {
+	baud = defaultTNCBaud
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return "", baud, false, nil
+	}
+
+	forcedSerial := false
+	if serialAddr, found := strings.CutPrefix(addr, "serial:"); found {
+		forcedSerial = true
+		addr = strings.TrimSpace(serialAddr)
+		if addr == "" {
+			return "", baud, true, errors.New("serial TNC address is empty")
+		}
+	}
+
+	if !forcedSerial && !looksLikeSerialPort(addr) {
+		return "", baud, false, nil
+	}
+
+	port = addr
+	if base, suffix, found := strings.Cut(port, ":"); found && suffix != "" {
+		if !allDigits(suffix) {
+			return "", baud, true, fmt.Errorf("invalid baudrate %q", suffix)
+		}
+		parsedBaud, err := strconv.Atoi(suffix)
+		if err != nil {
+			return "", baud, true, fmt.Errorf("could not extract baudrate from addr: %w", err)
+		}
+		if parsedBaud <= 0 {
+			return "", baud, true, fmt.Errorf("invalid baudrate %d", parsedBaud)
+		}
+		port = base
+		baud = parsedBaud
+	}
+
+	return port, baud, true, nil
+}
+
+func looksLikeSerialPort(addr string) bool {
+	switch {
+	case strings.HasPrefix(addr, "/dev/"):
+		return true
+	case strings.HasPrefix(addr, `\\.\`):
+		return true
+	default:
+		return isWindowsCOMPort(addr)
+	}
+}
+
+func isWindowsCOMPort(addr string) bool {
+	port := addr
+	if base, _, found := strings.Cut(port, ":"); found {
+		port = base
+	}
+	port = strings.ToUpper(port)
+	if !strings.HasPrefix(port, "COM") || len(port) == len("COM") {
+		return false
+	}
+	return allDigits(port[len("COM"):])
+}
+
+func allDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // OpenTNC opens a file (likely a pty) for a TNC. This can be used for a

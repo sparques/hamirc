@@ -59,7 +59,7 @@ The TNC I use (and you should probably use as well) is Direwolf with a CM108-bas
 
 Common options:
 
-- `-tnc`: KISS TNC address. Defaults to `:8001`. Use `/dev/path:baud` for a serial device.
+- `-tnc`: KISS TNC address. Defaults to `:8001`. Use `/dev/path:baud`, `COM3`, `COM3:baud`, or `serial:path:baud` for a serial device.
 - `-tncport`: KISS TNC port, `0` through `7`. Defaults to `0`.
 - `-serve`: IRC listen address. Defaults to `:6667`.
 - `-name`: server name sent to IRC clients. Defaults to `hamirc`.
@@ -87,9 +87,33 @@ Ultimately, it's because I wanted to. I like IRC and I like ham radio, and I wis
 
 If you see a flaw in this, I'm more than happy to accept pull requests or discuss how things should work via a github issue.
 
+## Windows Notes
+
+Direwolf's TCP KISS interface works the same as on other platforms:
+
+```
+hamirc.exe -tnc localhost:8001 -serve :6667
+```
+
+Serial KISS TNCs can be opened directly with Windows COM names:
+
+```
+hamirc.exe -tnc COM3
+hamirc.exe -tnc COM3:57600
+hamirc.exe -tnc \\.\COM12:57600
+```
+
+The explicit `serial:` prefix can be used when you want to force serial handling:
+
+```
+hamirc.exe -tnc serial:COM3:57600
+```
+
+The default serial baud rate is 115200.
+
 # Helping
 
-There should be better Windows support. This whole thing is already pretty niche--it will take a licensed Amateur Radio operator who is also interested in IRC. If that is further restricted to Linux users, I suspect I'll be forever be idling in empty channels.
+There should be better Windows testing. This whole thing is already pretty niche--it will take a licensed Amateur Radio operator who is also interested in IRC. If that is further restricted to Linux users, I suspect I'll be forever be idling in empty channels.
 
 So better support of windows is where I could stand the most help if you're interested. Other than that, testing out IRC clients and just using hamirc will be a massive help.
 

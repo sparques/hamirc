@@ -157,7 +157,9 @@ func topic(s *Server, user *User, args []string) (quit bool) {
 		s.reply(user, ERR_NEEDMOREPARAMS, user.Nick, "TOPIC requires 2 or more params")
 		return
 	}
-	ch, ok := s.Channels[args[1]]
+	s.Lock()
+	ch, ok := s.Channels[channelKey(args[1])]
+	s.Unlock()
 	if !ok {
 		s.reply(user, ERR_NOSUCHCHANNEL, user.Nick, args[1], "no such channel")
 		return
@@ -196,7 +198,7 @@ func part(s *Server, user *User, args []string) (quit bool) {
 	}
 	for _, chName := range strings.Split(args[1], ",") {
 		s.Lock()
-		ch, ok := s.Channels[chName]
+		ch, ok := s.Channels[channelKey(chName)]
 		if !ok {
 			s.Unlock()
 			s.reply(user, ERR_NOSUCHCHANNEL, user.Nick, chName, "no such channel")
@@ -204,7 +206,7 @@ func part(s *Server, user *User, args []string) (quit bool) {
 
 		}
 
-		if _, ok := ch.Users[strings.ToLower(user.Nick)]; !ok {
+		if _, ok := ch.Users[nickKey(user.Nick)]; !ok {
 			s.Unlock()
 			s.reply(user, ERR_NOTONCHANNEL, user.Nick, chName, "you're not in that channel")
 			continue
@@ -214,7 +216,7 @@ func part(s *Server, user *User, args []string) (quit bool) {
 		s.send(user, "PART", chName, reason)
 
 		s.Lock()
-		delete(ch.Users, strings.ToLower(user.Nick))
+		delete(ch.Users, nickKey(user.Nick))
 		s.Unlock()
 	}
 	return

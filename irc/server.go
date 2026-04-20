@@ -20,6 +20,14 @@ import (
 
 type UserMap map[string]*User
 
+func nickKey(nick string) string {
+	return strings.ToLower(nick)
+}
+
+func channelKey(channel string) string {
+	return strings.ToLower(channel)
+}
+
 // Server represents the IRC server
 type Server struct {
 	*sync.Mutex `json:"-"`
@@ -48,7 +56,7 @@ func NewServer() *Server {
 func (s *Server) Nick(nick string) *User {
 	s.Lock()
 	defer s.Unlock()
-	return s.Users[strings.ToLower(nick)]
+	return s.Users[nickKey(nick)]
 }
 
 func (s *Server) Serve(listenAddr string) error {
@@ -88,27 +96,44 @@ func (s *Server) Exit(err error) {
 func (s *Server) Channel(name string) *Channel {
 	s.Lock()
 	defer s.Unlock()
-	ch, ok := s.Channels[name]
+	key := channelKey(name)
+	ch, ok := s.Channels[key]
 	if ok {
 		return ch
 	}
-	s.Channels[name] = NewChannel(name)
-	return s.Channels[name]
+	s.Channels[key] = NewChannel(name)
+	return s.Channels[key]
 }
 
 func parse(line string) []string {
-	args := strings.Split(line, " ")
-	for i := range args {
-		if strings.HasPrefix(args[i], ":") {
-			if i == 0 {
-				args[i], _ = strings.CutPrefix(args[i], ":")
-				continue
-			}
-			args = strings.SplitN(line, " ", i+1)
-			args[len(args)-1], _ = strings.CutPrefix(args[len(args)-1], ":")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+
+	var args []string
+	if strings.HasPrefix(line, ":") {
+		prefix, rest, ok := strings.Cut(line[1:], " ")
+		args = append(args, prefix)
+		if !ok {
+			return args
+		}
+		line = strings.TrimSpace(rest)
+	}
+
+	for line != "" {
+		if strings.HasPrefix(line, ":") {
+			args = append(args, line[1:])
 			break
 		}
+		arg, rest, ok := strings.Cut(line, " ")
+		args = append(args, arg)
+		if !ok {
+			break
+		}
+		line = strings.TrimSpace(rest)
 	}
+
 	return args
 }
 
@@ -176,7 +201,6 @@ func (s *Server) handleTNC() {
 
 		// replace \n just in case...
 		args := parse(strings.ReplaceAll(string(buf), "\n", " "))
-		args[0], _ = strings.CutPrefix(args[0], ":")
 
 		log.Printf("<TNC> %v", args)
 
@@ -199,8 +223,8 @@ func (s *Server) handleTNC() {
 		// add user to server if not previously seen
 		if existingUser := s.Nick(incomingUser.Nick); existingUser == nil {
 			s.Lock()
-			if existingUser = s.Users[strings.ToLower(incomingUser.Nick)]; existingUser == nil {
-				s.Users[strings.ToLower(incomingUser.Nick)] = incomingUser
+			if existingUser = s.Users[nickKey(incomingUser.Nick)]; existingUser == nil {
+				s.Users[nickKey(incomingUser.Nick)] = incomingUser
 			} else {
 				incomingUser = existingUser
 			}
@@ -225,7 +249,7 @@ func (s *Server) handleTNC() {
 				var usersToJoin []*User
 				s.Lock()
 				for _, u := range s.Users {
-					_, ok := ch.Users[strings.ToLower(u.Nick)]
+					_, ok := ch.Users[nickKey(u.Nick)]
 					if u.Local() && !ok {
 						usersToJoin = append(usersToJoin, u)
 					}
@@ -285,10 +309,10 @@ func (s *Server) removeUser(user *User) {
 	s.Lock()
 	defer s.Unlock()
 
-	delete(s.Users, strings.ToLower(user.Nick))
+	delete(s.Users, nickKey(user.Nick))
 	for _, ch := range s.Channels {
 		// need to add quit message
-		delete(ch.Users, strings.ToLower(user.Nick))
+		delete(ch.Users, nickKey(user.Nick))
 	}
 }
 
@@ -302,7 +326,7 @@ func (s *Server) acceptUser(user *User) {
 
 	log.Printf("Accepted user %s.\n", user.ID())
 	s.Lock()
-	s.Users[strings.ToLower(user.Nick)] = user
+	s.Users[nickKey(user.Nick)] = user
 	s.Unlock()
 
 	s.motd(user)
@@ -335,11 +359,18 @@ func (s *Server) PingPong() {
 // handleCommand processes IRC commands
 func (s *Server) handleCommand(user *User, line string) (quit bool) {
 	args := parse(line)
+	if len(args) == 0 {
+		return
+	}
 	command := strings.ToUpper(args[0])
 
 	//log.Printf("<%s@%s> %s\n", user.Nick, user.Conn.RemoteAddr(), line)
 
-	log.Printf("<%s@%s> %s\n", user.Nick, user.conn.RemoteAddr(), args)
+	remoteAddr := "<unknown>"
+	if user.conn != nil {
+		remoteAddr = user.conn.RemoteAddr().String()
+	}
+	log.Printf("<%s@%s> %s\n", user.Nick, remoteAddr, args)
 	if user.Nick == "" {
 		switch command {
 		case "NICK", "USER", "CAP":
@@ -373,8 +404,8 @@ func (s *Server) changeNick(user *User, newNick string) {
 	s.Lock()
 	defer s.Unlock()
 
-	newNickLower := strings.ToLower(newNick)
-	oldNickLower := strings.ToLower(user.Nick)
+	newNickLower := nickKey(newNick)
+	oldNickLower := nickKey(user.Nick)
 
 	// Check if the new nickname is already in use
 	// allow person to snag a remote user though
@@ -417,7 +448,7 @@ func (s *Server) listUsers(user *User, mask string) {
 
 	switch {
 	case strings.HasPrefix(mask, "#"):
-		if ch, ok := s.Channels[mask]; ok {
+		if ch, ok := s.Channels[channelKey(mask)]; ok {
 			for _, u := range ch.Users {
 				fmt.Fprintf(user, ":%s 352 %s %s %s * * %s %s :1 %s\n", s.Name, user.Nick, ch.Name, u.Callsign, u.Nick, u.Status(), u.RealName)
 			}
@@ -452,7 +483,7 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 	}
 
 	if strings.HasPrefix(target, "#") {
-		ch, ok := s.Channels[target]
+		ch, ok := s.Channels[channelKey(target)]
 		if !ok {
 			return
 		}
@@ -465,7 +496,7 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 		return
 	}
 
-	targetUser, ok := s.Users[target]
+	targetUser, ok := s.Users[nickKey(target)]
 	if !ok {
 		return
 	}
@@ -483,13 +514,14 @@ func (s *Server) Privmsg(sender *User, target string, msg string) {
 // joinChannel adds a user to a channel
 func (s *Server) joinChannel(user *User, channelName string) {
 	s.Lock()
-	channel, exists := s.Channels[channelName]
+	key := channelKey(channelName)
+	channel, exists := s.Channels[key]
 	if !exists {
 		channel = NewChannel(channelName)
-		s.Channels[channelName] = channel
+		s.Channels[key] = channel
 	}
 	channel.Lock()
-	channel.Users[strings.ToLower(user.Nick)] = user
+	channel.Users[nickKey(user.Nick)] = user
 	channel.Unlock()
 
 	for _, u := range channel.Users {
@@ -520,7 +552,7 @@ func (s *Server) userHost(user *User, nicks []string) {
 	fmt.Fprintf(user, ":%s 302 %s :", s.Name, user.Nick)
 
 	for _, nick := range nicks {
-		u, ok := s.Users[nick]
+		u, ok := s.Users[nickKey(nick)]
 		if !ok {
 			continue
 		}
@@ -533,7 +565,7 @@ func (s *Server) quit(user *User, reason string) {
 	s.Lock()
 	channels := make([]string, 0, len(s.Channels))
 	for _, ch := range s.Channels {
-		if _, ok := ch.Users[strings.ToLower(user.Nick)]; ok {
+		if _, ok := ch.Users[nickKey(user.Nick)]; ok {
 			channels = append(channels, ch.Name)
 		}
 	}
@@ -550,7 +582,7 @@ func (s *Server) topic(user *User, channel string) {
 	// TODO: Figure out a way to share topics
 	// When topic is set, might have to broadcast out something like
 	// :<user.ID()> TOPIC <channel> <topic>
-	ch, ok := s.Channels[channel]
+	ch, ok := s.Channels[channelKey(channel)]
 	if !ok {
 		s.reply(user, ERR_NOSUCHCHANNEL, user.Nick, channel, "no such channel")
 		return

@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 )
@@ -98,11 +97,23 @@ func (s *Server) Load(path string) error {
 	if s.Mutex == nil {
 		s.Mutex = &sync.Mutex{}
 	}
+	if s.Users == nil {
+		s.Users = make(UserMap)
+	}
+	if s.Channels == nil {
+		s.Channels = make(map[string]*Channel)
+	}
+
 	// cycle through Users, set their non-exported fields
+	normalizedUsers := make(UserMap, len(s.Users))
 	for _, user := range s.Users {
 		user.buf = bufio.NewWriter(io.Discard)
+		normalizedUsers[nickKey(user.Nick)] = user
 	}
+	s.Users = normalizedUsers
+
 	// cycle through the channels and correct the user maps, instantiate locks
+	normalizedChannels := make(map[string]*Channel, len(s.Channels))
 	for _, ch := range s.Channels {
 		ch.Mutex = &sync.Mutex{}
 		if ch.Users == nil {
@@ -114,13 +125,15 @@ func (s *Server) Load(path string) error {
 				delete(ch.Users, tmpNick)
 				continue
 			}
-			actualNick := strings.ToLower(actualUser.Nick)
+			actualNick := nickKey(actualUser.Nick)
 			ch.Users[actualNick] = actualUser
 			if tmpNick != actualNick {
 				delete(ch.Users, tmpNick)
 			}
 		}
+		normalizedChannels[channelKey(ch.Name)] = ch
 	}
+	s.Channels = normalizedChannels
 	return nil
 }
 
@@ -162,7 +175,7 @@ func (ucm *ChanUserMap) UnmarshalJSON(data []byte) error {
 	}
 	for _, nick := range nicks {
 		user := NewUser(nick, io.Discard)
-		userChanMap[strings.ToLower(user.Nick)] = user
+		userChanMap[nickKey(user.Nick)] = user
 	}
 	*ucm = userChanMap
 	return nil

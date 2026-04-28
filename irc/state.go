@@ -2,6 +2,7 @@ package irc
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"hash/fnv"
@@ -84,12 +85,20 @@ func (s *Server) Load(path string) error {
 		return errors.New("cannot load server state with connected users")
 	}
 
+	hash := fnv.New64a()
+
 	fh, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer fh.Close()
-	dec := json.NewDecoder(fh)
+	stateJson, err := io.ReadAll(fh)
+	if err != nil {
+		return err
+	}
+	hash.Write(stateJson)
+
+	dec := json.NewDecoder(bytes.NewBuffer(stateJson))
 	err = dec.Decode(s)
 	if err != nil {
 		return err
@@ -134,6 +143,9 @@ func (s *Server) Load(path string) error {
 		normalizedChannels[channelKey(ch.Name)] = ch
 	}
 	s.Channels = normalizedChannels
+
+	log.Printf("Loaded server state (%X) from %s", hash.Sum64(), path)
+
 	return nil
 }
 

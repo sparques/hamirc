@@ -11,22 +11,37 @@ import (
 	"syscall"
 
 	"github.com/sparques/hamirc/irc"
+	"github.com/sparques/kiss"
 )
 
 var (
-	tncaddr   = flag.String("tnc", ":8001", "address of TNC")
-	name      = flag.String("name", "hamirc", "name of the server as sent to clients")
-	serve     = flag.String("serve", ":6667", "port and optionally address to listen on for IRC connections")
-	statefile = flag.String("state", "serverState.json", "path to file for loading/saving server state")
-	persist   = flag.Bool("persist", true, "if true, will load/save server state (users, channels, topics) to a file")
-	mustload  = flag.Bool("mustload", true, "if true, loading the state must succeed or program will exit; this is to prevent a server state file from being overwritten by an empty server state.")
-	autojoin  = flag.Bool("autojoin", true, "if true, will cause local users (those connected via TCP) to automatically join any channels that receive a message")
-	tncport   = flag.Int("tncport", 0, "the TNC port to use; valid options: 0-7;")
-	debug     = flag.Bool("debug", false, "if true, log raw IRC and TNC traffic")
+	tncaddr     = flag.String("tnc", ":8001", "address of TNC")
+	name        = flag.String("name", "hamirc", "name of the server as sent to clients")
+	serve       = flag.String("serve", ":6667", "port and optionally address to listen on for IRC connections")
+	statefile   = flag.String("state", "serverState.json", "path to file for loading/saving server state")
+	persist     = flag.Bool("persist", true, "if true, will load/save server state (users, channels, topics) to a file")
+	mustload    = flag.Bool("mustload", true, "if true, loading the state must succeed or program will exit; this is to prevent a server state file from being overwritten by an empty server state.")
+	autojoin    = flag.Bool("autojoin", true, "if true, will cause local users (those connected via TCP) to automatically join any channels that receive a message")
+	tncport     = flag.Int("tncport", 0, "the TNC port to use; valid options: 0-7;")
+	debug       = flag.Bool("debug", false, "if true, log raw IRC and TNC traffic")
+	sethardware stringList
 )
 
+type stringList []string
+
+func (s *stringList) String() string {
+	return fmt.Sprint(*s)
+}
+
+func (s *stringList) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
+
 func main() {
+	flag.Var(&sethardware, "sethardware", "optional SetHardware frames to send at start up (can be repeated)")
 	flag.Parse()
+
 	server := irc.NewServer()
 	if *persist {
 		err := server.Load(*statefile)
@@ -58,6 +73,12 @@ func main() {
 	if err != nil {
 		log.Println(err)
 		return
+	}
+
+	if len(sethardware) > 0 {
+		for _, frame := range sethardware {
+			server.CommandPort().Write(kiss.WithCommand(kiss.FrameTypeSetHardware, []byte(frame)))
+		}
 	}
 
 	// trap signals so we can gracefully exit

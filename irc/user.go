@@ -14,12 +14,13 @@ import (
 
 // User represents a connected IRC client
 type User struct {
-	Nick     string
-	Callsign string
-	RealName string
-	LastSeen time.Time
-	conn     net.Conn
-	local    bool
+	Nick           string
+	Callsign       string
+	RealName       string
+	LastSeen       time.Time
+	partedChannels []string
+	conn           net.Conn
+	local          bool
 
 	buf *bufio.Writer
 }

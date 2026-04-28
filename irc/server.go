@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sparques/hamirc/kiss"
+	"github.com/sparques/kiss"
 	"go.bug.st/serial"
 )
 
@@ -32,11 +32,12 @@ func channelKey(channel string) string {
 
 // Server represents the IRC server
 type Server struct {
-	*sync.Mutex `json:"-"`
-	Name        string
-	Users       UserMap
-	Channels    map[string]*Channel
-	MOTD        func() string `json:"-"`
+	*sync.Mutex    `json:"-"`
+	Name           string
+	Users          UserMap
+	Channels       map[string]*Channel
+	MOTD           func() string `json:"-"`
+	UserPurgeAfter time.Duration
 	// AutoJoin causes Local() users to automatically join channels they
 	// get messages for.
 	AutoJoin bool
@@ -48,11 +49,12 @@ type Server struct {
 
 func NewServer() *Server {
 	return &Server{
-		Mutex:    &sync.Mutex{},
-		Name:     "server",
-		Users:    make(UserMap),
-		Channels: make(map[string]*Channel),
-		exitch:   make(chan error),
+		Mutex:          &sync.Mutex{},
+		Name:           "server",
+		Users:          make(UserMap),
+		Channels:       make(map[string]*Channel),
+		UserPurgeAfter: 24 * time.Hour,
+		exitch:         make(chan error),
 	}
 }
 
@@ -73,6 +75,8 @@ func (s *Server) Serve(listenAddr string) error {
 	go s.handleTNC()
 
 	go s.PingPong()
+
+	go s.userPurge()
 
 	go func() {
 		for {
@@ -96,9 +100,31 @@ func (s *Server) Exit(err error) {
 	s.exitch <- err
 }
 
+func (s *Server) CommandPort() io.ReadWriter {
+	return s.tnc.CommandPort(uint8(s.tncport))
+}
+
 func (s *Server) debugf(format string, v ...any) {
 	if s.Debug {
 		log.Printf(format, v...)
+	}
+}
+
+func (s *Server) userPurge() {
+	for {
+		s.Lock()
+		for _, ch := range s.Channels {
+			ch.Lock()
+			for nick, user := range ch.Users {
+				if time.Since(user.LastSeen) > s.UserPurgeAfter {
+					delete(ch.Users, nick)
+				}
+			}
+			ch.Unlock()
+		}
+		s.Unlock()
+
+		time.Sleep(time.Hour)
 	}
 }
 
@@ -293,7 +319,7 @@ func (s *Server) handleTNC() {
 		}
 
 		// only let PRIVMSG, NOTICE, and topic through
-		if !slices.Contains([]string{"PRIVMSG", "NOTICE", "TOPIC"}, args[1]) {
+		if !slices.Contains([]string{"PRIVMSG", "NOTICE", "TOPIC", "PART"}, args[1]) {
 			continue
 		}
 
@@ -319,6 +345,15 @@ func (s *Server) handleTNC() {
 
 		// do user-level ban check here?
 
+		if args[1] == "PART" {
+			reason := "leaving channel"
+			if len(args) > 3 {
+				reason = args[3]
+			}
+			s.partChannel(incomingUser, args[2], reason)
+			continue
+		}
+
 		// if target is channel
 		if strings.HasPrefix(args[2], "#") {
 			// create channel if it doesn't exist
@@ -334,7 +369,7 @@ func (s *Server) handleTNC() {
 				s.Lock()
 				for _, u := range s.Users {
 					_, ok := ch.Users[nickKey(u.Nick)]
-					if u.Local() && !ok {
+					if u.Local() && !ok && !slices.Contains(u.partedChannels, channelKey(ch.Name)) {
 						usersToJoin = append(usersToJoin, u)
 					}
 				}
@@ -345,9 +380,10 @@ func (s *Server) handleTNC() {
 			}
 		}
 
-		if args[1] == "TOPIC" {
+		switch {
+		case args[1] == "TOPIC":
 			s.setTopic(incomingUser, s.Channel(args[2]), strings.Join(args[3:], " "))
-		} else {
+		default:
 			if len(args) < 4 {
 				continue
 			}
@@ -596,6 +632,9 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 			if u.Nick == sender.Nick && cmd != "PART" {
 				continue
 			}
+			if slices.Contains(u.partedChannels, target) {
+				continue
+			}
 			recipients = append(recipients, u)
 		}
 	} else if targetUser, ok := s.Users[nickKey(target)]; ok {
@@ -633,6 +672,7 @@ func (s *Server) joinChannel(user *User, channelName string) {
 		channel = NewChannel(channelName)
 		s.Channels[key] = channel
 	}
+	user.partedChannels = slices.DeleteFunc(user.partedChannels, func(ch string) bool { return ch == key })
 	channel.Users[nickKey(user.Nick)] = user
 
 	recipients := make([]*User, 0, len(channel.Users))
@@ -662,6 +702,28 @@ func (s *Server) joinChannel(user *User, channelName string) {
 	}
 	fmt.Fprintf(user, "\r\n")
 	s.reply(user, RPL_ENDOFNAMES, user.Nick, channelName, "End of /NAMES list")
+}
+
+func (s *Server) partChannel(user *User, channelName, reason string) bool {
+	s.Lock()
+	ch, ok := s.Channels[channelKey(channelName)]
+	if !ok {
+		s.Unlock()
+		return false
+	}
+	if _, ok := ch.Users[nickKey(user.Nick)]; !ok {
+		s.Unlock()
+		return false
+	}
+	s.Unlock()
+
+	s.send(user, "PART", channelName, reason)
+
+	s.Lock()
+	delete(ch.Users, nickKey(user.Nick))
+	s.Unlock()
+
+	return true
 }
 
 func (s *Server) userHost(user *User, nicks []string) {

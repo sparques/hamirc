@@ -1,0 +1,14 @@
+# Local build outputs
+/hamirc
+/hamirc.exe
+
+# Runtime state and local test fixtures
+/serverState.json
+/server*.json
+/maple.json
+/new.json
+/ss.json
+
+# Local/editor artifacts
+/.codex
+*.bak

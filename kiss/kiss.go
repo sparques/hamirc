@@ -18,7 +18,38 @@ const (
 	FESC  = 0xDB // Escape character
 	TFEND = 0xDC // Transposed FEND
 	TFESC = 0xDD // Transposed FESC
+
+	// Frame Types
+	// CommandData This frame contains data that should be sent out of the TNC. The maximum number of bytes is determined by the amount of memory in the TNC.
+	FrameTypeData = Command(0x00)
+
+	// ommandTXDelay is the amount of time to wait between keying the transmitter and beginning to send data (in 10 ms units).
+	FrameTypeTXDelay = Command(0x01)
+
+	// PFrame The persistence parameter. Persistence=Data*256-1. Used for CSMA.
+	FrameTypeP = Command(0x02)
+
+	// SlotTimeFrame sets slot time in 10 ms units. Used for CSMA.
+	FrameTypeSlotTime = Command(0x03)
+
+	// TXTail Frame The length of time to keep the transmitter keyed after sending the data (in 10 ms units).
+	FrameTypeTXTail = Command(0x04)
+
+	// FullDuplex 0 means half duplex, anything else means full duplex.
+	FrameTypeFullDuplex = Command(0x05)
+
+	// SetHardware sets device dependant parameters
+	FrameTypeSetHardware = Command(0x06)
+
+	// Return exits kiss mode. Applies to all ports, must be called with port
+	FrameTypeReturn = Command(0xFF)
 )
+
+type Command uint8
+
+func Is(a, b Command) bool {
+	return a&0x0F == b&0x0F
+}
 
 var (
 	ErrInvalidPort = errors.New("invalid port: must be 0-7")

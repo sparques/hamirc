@@ -78,6 +78,13 @@ func main() {
 	if len(sethardware) > 0 {
 		for _, frame := range sethardware {
 			server.CommandPort().Write(kiss.WithCommand(kiss.FrameTypeSetHardware, []byte(frame)))
+			reply := make([]byte, 1024)
+			n, err := server.CommandPort().Read(reply)
+			if err != nil {
+				log.Printf("Error reading SetHardware resposne: %v", err)
+				continue
+			}
+			log.Printf("SetHardware: %s; Reply: %s", frame, string(reply[:n]))
 		}
 	}
 

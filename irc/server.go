@@ -294,10 +294,9 @@ func (s *Server) OpenTNC(path string) error {
 
 func (s *Server) handleTNC() {
 	defer s.Exit(errors.New("lost connection to TNC"))
-	// Just use port zero
+
 	port := s.tnc.Port(uint8(s.tncport))
-	// send our out going
-	// read incoming messages
+
 	buf := make([]byte, 1024*512)
 	for {
 		buf = buf[0:1024]
@@ -411,6 +410,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 	user := NewUser("", hijack)
 	user.local = true
 	user.conn = conn
+
+	// send a notice when local user connects
+	fmt.Fprintf(s.tnc.Port(uint8(s.tncport)), ":%s %s %s :%s", user.String(), "NOTICE", "#hamirc", "hamirc - IRC for Amateur Radio - https://github.com/sparques/hamirc")
 
 	// Handle commands
 	for scanner.Scan() {
@@ -639,9 +641,6 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 		}
 	} else if targetUser, ok := s.Users[nickKey(target)]; ok {
 		recipients = append(recipients, targetUser)
-	} else {
-		s.Unlock()
-		return
 	}
 	s.Unlock()
 

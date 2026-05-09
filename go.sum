@@ -8,6 +8,10 @@ github.com/sparques/kiss v0.0.0-20260423234907-b2655561a966 h1:il0mV3blf+VeyTPLN
 github.com/sparques/kiss v0.0.0-20260423234907-b2655561a966/go.mod h1:SNw5Vaz7XyB06vM5gzsC2vYUQmzgA+yA3sZJbjX2ibs=
 github.com/sparques/kiss v0.0.0-20260424133057-6ce6fe53095c h1:GB3UYSeySpgWuFQJfXuU2Z3bsQROFj3wQMQvKel2KO8=
 github.com/sparques/kiss v0.0.0-20260424133057-6ce6fe53095c/go.mod h1:SNw5Vaz7XyB06vM5gzsC2vYUQmzgA+yA3sZJbjX2ibs=
+github.com/sparques/kiss v0.0.0-20260428185809-61cfb5d39db2 h1:b9V5LwmHRxZvy+FbQEBvjfL6+UBQJztWUmHHhnoXQMU=
+github.com/sparques/kiss v0.0.0-20260428185809-61cfb5d39db2/go.mod h1:SNw5Vaz7XyB06vM5gzsC2vYUQmzgA+yA3sZJbjX2ibs=
+github.com/sparques/kiss v0.0.0-20260428190248-2e406c069e28 h1:eDvs+7Z8iZgGOjq+5YRC3mBqPqnX0PEiT1cFVBw+idk=
+github.com/sparques/kiss v0.0.0-20260428190248-2e406c069e28/go.mod h1:SNw5Vaz7XyB06vM5gzsC2vYUQmzgA+yA3sZJbjX2ibs=
 github.com/stretchr/testify v1.8.4 h1:CcVxjf3Q8PM0mHUKJCdn+eZZtm5yQwehR5yeSVQQcUk=
 github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=
 go.bug.st/serial v1.6.4 h1:7FmqNPgVp3pu2Jz5PoPtbZ9jJO5gnEnZIvnI1lzve8A=

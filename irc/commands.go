@@ -1,7 +1,11 @@
 package irc
 
 import (
+	"fmt"
+	"log"
 	"strings"
+
+	"github.com/sparques/kiss"
 )
 
 type serverCommand func(s *Server, user *User, args []string) (quit bool)
@@ -25,6 +29,9 @@ var cmdSet = map[string]serverCommand{
 	"QUIT":     quit,
 	"WHO":      who,
 	"WHOIS":    whois,
+
+	"FREQUENCY":   frequency,
+	"SETHARDWARE": sethardware,
 }
 
 func capabilities(s *Server, user *User, args []string) (quit bool) {
@@ -230,6 +237,52 @@ func quit(s *Server, user *User, args []string) (quit bool) {
 		s.quit(user, strings.Join(args[1:], " "))
 	}
 	return true
+}
+
+func frequency(s *Server, user *User, args []string) (quit bool) {
+	var rx, tx string
+	switch len(args) {
+	case 2:
+		rx, tx = args[1], args[1]
+	case 3:
+		rx, tx = args[1], args[2]
+	default:
+		// do error
+		log.Printf("Frequency called with %d args", len(args))
+	}
+
+	frame := []byte(fmt.Sprintf("AT+DMOSETGROUP=1,%s,%s,0000,0,0000", tx, rx))
+
+	s.CommandPort().Write(kiss.WithCommand(kiss.FrameTypeSetHardware, frame))
+	reply := make([]byte, 1024)
+	n, err := s.CommandPort().Read(reply)
+	if err != nil {
+		log.Printf("Error reading SetHardware response: %v", err)
+
+		return
+	}
+
+	//		s.reply(user, "FREQUENCY", fmt.Sprintf("Failed to change Frequency: %v", ))
+	log.Printf("SetHardware: %s; Reply: %s", frame, string(reply[:n]))
+
+	s.reply(user, "FREQUENCY", fmt.Sprintf("Changed Frequency: RX: %s; TX: %s", rx, tx))
+
+	return false
+}
+
+func sethardware(s *Server, user *User, args []string) (quit bool) {
+	cmd := strings.Join(args, " ")
+	s.CommandPort().Write(kiss.WithCommand(kiss.FrameTypeSetHardware, []byte(cmd)))
+	reply := make([]byte, 1024)
+	n, err := s.CommandPort().Read(reply)
+	if err != nil {
+		log.Printf("Error reading SetHardware response: %v", err)
+		return false
+	}
+
+	s.reply(user, "SETHARDWARE", string(reply[:n]))
+
+	return
 }
 
 /*

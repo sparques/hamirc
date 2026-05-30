@@ -24,6 +24,7 @@ var (
 	autojoin    = flag.Bool("autojoin", true, "if true, will cause local users (those connected via TCP) to automatically join any channels that receive a message")
 	tncport     = flag.Int("tncport", 0, "the TNC port to use; valid options: 0-7;")
 	debug       = flag.Bool("debug", false, "if true, log raw IRC and TNC traffic")
+	announce    = flag.Bool("announce", true, "if true, send hamirc announce message when a local user connects")
 	sethardware stringList
 )
 
@@ -57,6 +58,7 @@ func main() {
 	// Automatically have local users join any newly seen channels
 	server.AutoJoin = *autojoin
 	server.Debug = *debug
+	server.Announce = *announce
 	server.Name = *name
 	server.MOTD = func() string {
 		cmd := exec.Command("fortune")

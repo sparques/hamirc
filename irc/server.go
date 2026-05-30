@@ -42,6 +42,7 @@ type Server struct {
 	// get messages for.
 	AutoJoin bool
 	Debug    bool
+	Announce bool
 	exitch   chan error
 	tnc      *kiss.TNC
 	tncport  int
@@ -412,7 +413,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 	user.conn = conn
 
 	// send a notice when local user connects
-	fmt.Fprintf(s.tnc.Port(uint8(s.tncport)), ":%s %s %s :%s", user.String(), "NOTICE", "#hamirc", "hamirc - IRC for Amateur Radio - https://github.com/sparques/hamirc")
+	if s.Announce {
+		fmt.Fprintf(s.tnc.Port(uint8(s.tncport)), ":%s %s %s :%s", user.String(), "NOTICE", "#hamirc", "hamirc - IRC for Amateur Radio - https://github.com/sparques/hamirc")
+	}
 
 	// Handle commands
 	for scanner.Scan() {

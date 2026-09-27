@@ -333,17 +333,16 @@ func (s *Server) handleTNC() {
 			continue
 		}
 		// add user to server if not previously seen
-		if existingUser := s.Nick(incomingUser.Nick); existingUser == nil {
-			s.Lock()
-			if existingUser = s.Users[nickKey(incomingUser.Nick)]; existingUser == nil {
-				s.Users[nickKey(incomingUser.Nick)] = incomingUser
-			} else {
-				incomingUser = existingUser
-			}
-			s.Unlock()
-		} else {
+		s.Lock()
+		if existingUser := s.Users[nickKey(incomingUser.Nick)]; existingUser == nil {
+			s.Users[nickKey(incomingUser.Nick)] = incomingUser
+		} else if !existingUser.Local() {
 			incomingUser = existingUser
 		}
+		// If a local user holds this nick, the radio user stays untracked.
+		// Reusing the local user would make the message look like ours and
+		// send() would retransmit it.
+		s.Unlock()
 
 		// do user-level ban check here?
 
@@ -638,7 +637,7 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 			return
 		}
 		for _, u := range ch.Users {
-			if u.Nick == sender.Nick && cmd != "PART" {
+			if u == sender && cmd != "PART" {
 				continue
 			}
 			if slices.Contains(u.partedChannels, target) {
@@ -713,7 +712,8 @@ func (s *Server) partChannel(user *User, channelName, reason string) bool {
 		s.Unlock()
 		return false
 	}
-	if _, ok := ch.Users[nickKey(user.Nick)]; !ok {
+	// compare pointers: a local user may share a nick with a radio user
+	if ch.Users[nickKey(user.Nick)] != user {
 		s.Unlock()
 		return false
 	}

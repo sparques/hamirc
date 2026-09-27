@@ -523,3 +523,22 @@ func TestUserIDRoundTripsThroughParse(t *testing.T) {
 		}
 	}
 }
+
+func TestHandleTNCNickCollisionDeliversToLocalUser(t *testing.T) {
+	server := NewServer()
+	var out bytes.Buffer
+	local := NewUser("Maple", &out)
+	local.local = true
+	local.Callsign = "N0CALL"
+	server.Users[nickKey(local.Nick)] = local
+	server.Channel("#hamirc").Users[nickKey(local.Nick)] = local
+
+	runSingleTNCFrame(t, server, ":Maple!K1ABC@Far_Away PRIVMSG #hamirc :hello")
+
+	if server.Nick("Maple") != local {
+		t.Fatal("radio user replaced local user")
+	}
+	if want := ":Maple!K1ABC@Far_Away PRIVMSG #hamirc :hello\r\n"; out.String() != want {
+		t.Fatalf("local user got %q, want %q", out.String(), want)
+	}
+}

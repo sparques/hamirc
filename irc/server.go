@@ -643,7 +643,7 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 			if u == sender && cmd != "PART" {
 				continue
 			}
-			if slices.Contains(u.partedChannels, target) {
+			if slices.Contains(u.partedChannels, channelKey(target)) {
 				continue
 			}
 			recipients = append(recipients, u)

@@ -35,8 +35,17 @@ var cmdSet = map[string]serverCommand{
 }
 
 func capabilities(s *Server, user *User, args []string) (quit bool) {
-	// We don't support much...
-	s.reply(user, "CAP", "*", "LS", "")
+	// We don't support any capabilities. Only answer the subcommands that
+	// expect a reply; answering CAP END makes some clients loop.
+	if len(args) < 2 {
+		return
+	}
+	switch sub := strings.ToUpper(args[1]); sub {
+	case "LS", "LIST":
+		s.reply(user, "CAP", replyNick(user), sub, "")
+	case "REQ":
+		s.reply(user, "CAP", replyNick(user), "NAK", strings.Join(args[2:], " "))
+	}
 	return
 }
 

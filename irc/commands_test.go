@@ -175,3 +175,20 @@ func TestNickChangeBroadcastsToChannelMembers(t *testing.T) {
 		t.Fatalf("other nick-change message = %q, want %q", otherOut.String(), want)
 	}
 }
+
+func TestCapEndGetsNoReply(t *testing.T) {
+	server := NewServer()
+	server.Name = "hamirc"
+	var out bytes.Buffer
+	user := NewUser("", &out)
+
+	server.handleCommand(user, "CAP LS 302")
+	if want := ":hamirc CAP * LS :\r\n"; out.String() != want {
+		t.Fatalf("CAP LS reply = %q, want %q", out.String(), want)
+	}
+	out.Reset()
+	server.handleCommand(user, "CAP END")
+	if out.Len() != 0 {
+		t.Fatalf("CAP END got reply %q", out.String())
+	}
+}

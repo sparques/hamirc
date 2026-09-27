@@ -699,12 +699,8 @@ func (s *Server) joinChannel(user *User, channelName string) {
 		s.reply(user, RPL_TOPIC, user.Nick, channelName, topic)
 	}
 
-	fmt.Fprintf(user, ":%s 353 %s = %s :", s.Name, user.Nick, channelName)
-
-	for _, name := range names {
-		fmt.Fprintf(user, "%s ", name)
-	}
-	fmt.Fprintf(user, "\r\n")
+	// one Write per line so concurrent writers can't splice into it
+	fmt.Fprintf(user, ":%s 353 %s = %s :%s\r\n", s.Name, user.Nick, channelName, strings.Join(names, " "))
 	s.reply(user, RPL_ENDOFNAMES, user.Nick, channelName, "End of /NAMES list")
 }
 
@@ -735,16 +731,15 @@ func (s *Server) userHost(user *User, nicks []string) {
 	defer s.Unlock()
 
 	//:irc.example.com 302 Sparques :Nick1=-user1@host1 Nick2=+user2@host2
-	fmt.Fprintf(user, ":%s 302 %s :", s.Name, user.Nick)
-
+	var replies []string
 	for _, nick := range nicks {
 		u, ok := s.Users[nickKey(nick)]
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(user, "%s=-%s@%s ", nick, u.Callsign, strings.ReplaceAll(u.RealName, " ", "_"))
+		replies = append(replies, fmt.Sprintf("%s=-%s@%s", nick, u.Callsign, strings.ReplaceAll(u.RealName, " ", "_")))
 	}
-	fmt.Fprintf(user, "\r\n")
+	fmt.Fprintf(user, ":%s 302 %s :%s\r\n", s.Name, user.Nick, strings.Join(replies, " "))
 }
 
 func (s *Server) quit(user *User, reason string) {

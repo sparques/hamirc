@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,7 +23,8 @@ type User struct {
 	conn           net.Conn
 	local          bool
 
-	buf *bufio.Writer
+	bufMu sync.Mutex // User is written from several goroutines
+	buf   *bufio.Writer
 }
 
 func NewUser(nick string, wr io.Writer) *User {
@@ -35,6 +37,8 @@ func NewUser(nick string, wr io.Writer) *User {
 // Write writes to the user, in discrete lines, buffering if we did
 // not get a line-feed.
 func (u *User) Write(buf []byte) (n int, err error) {
+	u.bufMu.Lock()
+	defer u.bufMu.Unlock()
 	var n2 int
 	for len(buf) > 0 {
 		i := bytes.Index(buf, []byte{'\n'})

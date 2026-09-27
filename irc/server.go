@@ -117,7 +117,9 @@ func (s *Server) userPurge() {
 		for _, ch := range s.Channels {
 			ch.Lock()
 			for nick, user := range ch.Users {
-				if time.Since(user.LastSeen) > s.UserPurgeAfter {
+				// local users stay until they part or disconnect; their client
+				// still shows them as joined
+				if !user.Local() && time.Since(user.LastSeen) > s.UserPurgeAfter {
 					delete(ch.Users, nick)
 				}
 			}

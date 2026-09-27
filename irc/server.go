@@ -105,6 +105,30 @@ func (s *Server) CommandPort() io.ReadWriter {
 	return s.tnc.CommandPort(uint8(s.tncport))
 }
 
+// SetHardware sends a KISS SetHardware frame and waits briefly for the TNC's
+// reply. Many TNCs (direwolf included) never answer, and an unbounded read
+// would hang the caller.
+// ponytail: a timed-out read stays parked and eats the next reply; add a reply router if that bites.
+func (s *Server) SetHardware(cmd string) (string, error) {
+	port := s.CommandPort()
+	if _, err := port.Write(kiss.WithCommand(kiss.FrameTypeSetHardware, []byte(cmd))); err != nil {
+		return "", err
+	}
+	replies := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 1024)
+		if n, err := port.Read(buf); err == nil {
+			replies <- string(buf[:min(n, len(buf))])
+		}
+	}()
+	select {
+	case reply := <-replies:
+		return reply, nil
+	case <-time.After(2 * time.Second):
+		return "", errors.New("no reply from TNC")
+	}
+}
+
 func (s *Server) debugf(format string, v ...any) {
 	if s.Debug {
 		log.Printf(format, v...)

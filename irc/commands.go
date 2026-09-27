@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-
-	"github.com/sparques/kiss"
 )
 
 type serverCommand func(s *Server, user *User, args []string) (quit bool)
@@ -258,23 +256,18 @@ func frequency(s *Server, user *User, args []string) (quit bool) {
 	case 3:
 		rx, tx = args[1], args[2]
 	default:
-		// do error
-		log.Printf("Frequency called with %d args", len(args))
-	}
-
-	frame := []byte(fmt.Sprintf("AT+DMOSETGROUP=1,%s,%s,0000,0,0000", tx, rx))
-
-	s.CommandPort().Write(kiss.WithCommand(kiss.FrameTypeSetHardware, frame))
-	reply := make([]byte, 1024)
-	n, err := s.CommandPort().Read(reply)
-	if err != nil {
-		log.Printf("Error reading SetHardware response: %v", err)
-
+		s.reply(user, ERR_NEEDMOREPARAMS, replyNick(user), "FREQUENCY", "Usage: FREQUENCY <rx> [tx]")
 		return
 	}
 
-	//		s.reply(user, "FREQUENCY", fmt.Sprintf("Failed to change Frequency: %v", ))
-	log.Printf("SetHardware: %s; Reply: %s", frame, string(reply[:n]))
+	frame := fmt.Sprintf("AT+DMOSETGROUP=1,%s,%s,0000,0,0000", tx, rx)
+	reply, err := s.SetHardware(frame)
+	if err != nil {
+		log.Printf("SetHardware %s: %v", frame, err)
+		s.reply(user, "FREQUENCY", fmt.Sprintf("Failed to change frequency: %v", err))
+		return
+	}
+	log.Printf("SetHardware: %s; Reply: %s", frame, reply)
 
 	s.reply(user, "FREQUENCY", fmt.Sprintf("Changed Frequency: RX: %s; TX: %s", rx, tx))
 
@@ -282,16 +275,17 @@ func frequency(s *Server, user *User, args []string) (quit bool) {
 }
 
 func sethardware(s *Server, user *User, args []string) (quit bool) {
-	cmd := strings.Join(args, " ")
-	s.CommandPort().Write(kiss.WithCommand(kiss.FrameTypeSetHardware, []byte(cmd)))
-	reply := make([]byte, 1024)
-	n, err := s.CommandPort().Read(reply)
+	if len(args) < 2 {
+		s.reply(user, ERR_NEEDMOREPARAMS, replyNick(user), "SETHARDWARE", "Not enough parameters")
+		return
+	}
+	reply, err := s.SetHardware(strings.Join(args[1:], " "))
 	if err != nil {
-		log.Printf("Error reading SetHardware response: %v", err)
-		return false
+		s.reply(user, "SETHARDWARE", err.Error())
+		return
 	}
 
-	s.reply(user, "SETHARDWARE", string(reply[:n]))
+	s.reply(user, "SETHARDWARE", reply)
 
 	return
 }

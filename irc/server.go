@@ -627,10 +627,7 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 	sender.LastSeen = time.Now()
 	senderID := sender.ID()
 
-	var tncWriter io.Writer
-	if sender.Local() && s.tnc != nil {
-		tncWriter = s.tnc.Port(uint8(s.tncport))
-	}
+	transmit := sender.Local() && s.tnc != nil
 
 	var recipients []*User
 	if strings.HasPrefix(target, "#") {
@@ -654,12 +651,19 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 	s.Unlock()
 
 	// Transmit local messages via radio after releasing the server lock.
-	if tncWriter != nil {
-		fmt.Fprintf(tncWriter, ":%s %s %s :%s", senderID, cmd, target, msg)
+	if transmit {
+		s.transmit(":%s %s %s :%s", senderID, cmd, target, msg)
 	}
 
 	for _, recipient := range recipients {
 		fmt.Fprintf(recipient, ":%s %s %s :%s\r\n", senderID, cmd, target, msg)
+	}
+}
+
+// transmit sends one line over the radio.
+func (s *Server) transmit(format string, args ...any) {
+	if _, err := fmt.Fprintf(s.tnc.Port(uint8(s.tncport)), format, args...); err != nil {
+		log.Printf("error transmitting to TNC: %v", err)
 	}
 }
 
@@ -826,10 +830,7 @@ func (s *Server) setTopic(user *User, ch *Channel, topic string) {
 	}
 	chName := ch.Name
 	userID := user.ID()
-	var tncWriter io.Writer
-	if user.Local() && s.tnc != nil {
-		tncWriter = s.tnc.Port(uint8(s.tncport))
-	}
+	transmit := user.Local() && s.tnc != nil
 	s.Unlock()
 
 	for _, recipient := range recipients {
@@ -837,7 +838,7 @@ func (s *Server) setTopic(user *User, ch *Channel, topic string) {
 	}
 
 	// also push out topic change
-	if tncWriter != nil {
-		fmt.Fprintf(tncWriter, ":%s %s %s :%s", userID, "TOPIC", chName, topic)
+	if transmit {
+		s.transmit(":%s %s %s :%s", userID, "TOPIC", chName, topic)
 	}
 }

@@ -234,7 +234,9 @@ func part(s *Server, user *User, args []string) (quit bool) {
 		s.Unlock()
 
 		s.partChannel(user, chName, reason)
+		s.Lock()
 		user.partedChannels = append(user.partedChannels, channelKey(chName))
+		s.Unlock()
 	}
 	return
 }

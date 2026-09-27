@@ -361,7 +361,10 @@ func (s *Server) handleTNC() {
 			ch := s.Channel(args[2])
 
 			// add user to channel if not already there
-			if nil == ch.Nick(incomingUser.Nick) {
+			s.Lock()
+			_, inChannel := ch.Users[nickKey(incomingUser.Nick)]
+			s.Unlock()
+			if !inChannel {
 				s.joinChannel(incomingUser, ch.Name)
 			}
 

@@ -777,16 +777,23 @@ func (s *Server) userHost(user *User, nicks []string) {
 
 func (s *Server) quit(user *User, reason string) {
 	s.Lock()
-	channels := make([]string, 0, len(s.Channels))
+	var recipients []*User
 	for _, ch := range s.Channels {
-		if _, ok := ch.Users[nickKey(user.Nick)]; ok {
-			channels = append(channels, ch.Name)
+		if ch.Users[nickKey(user.Nick)] != user {
+			continue
+		}
+		for _, u := range ch.Users {
+			if u != user {
+				recipients = append(recipients, u)
+			}
 		}
 	}
+	userID := user.ID()
 	s.Unlock()
 
-	for _, channel := range channels {
-		s.send(user, "QUIT", channel, reason)
+	// Local only: radio stations drop QUIT, so transmitting it wastes airtime.
+	for _, recipient := range uniqueUsers(recipients) {
+		fmt.Fprintf(recipient, ":%s QUIT :%s\r\n", userID, reason)
 	}
 }
 

@@ -88,11 +88,16 @@ func user(s *Server, user *User, args []string) (quit bool) {
 }
 
 func join(s *Server, user *User, args []string) (quit bool) {
-	if len(args) != 2 {
+	if len(args) < 2 {
 		s.reply(user, ERR_NEEDMOREPARAMS, replyNick(user), "JOIN", "Not enough parameters")
 		return
 	}
+	// channel keys (args[2]) are accepted and ignored
 	for _, ch := range strings.Split(args[1], ",") {
+		if !strings.HasPrefix(ch, "#") {
+			s.reply(user, ERR_NOSUCHCHANNEL, user.Nick, ch, "Channel names must start with #")
+			continue
+		}
 		s.joinChannel(user, ch)
 	}
 	return

@@ -533,7 +533,7 @@ func (s *Server) changeNick(user *User, newNick string) {
 	// Check if the new nickname is already in use
 	// allow person to snag a remote user though
 	existingUser, ok := s.Users[newNickLower]
-	if ok && existingUser.Local() {
+	if ok && existingUser != user && existingUser.Local() {
 		s.Unlock()
 		s.reply(user, ERR_NICKNAMEINUSE, replyNick(user), newNick, "Nickname is already in use")
 		return
@@ -542,7 +542,9 @@ func (s *Server) changeNick(user *User, newNick string) {
 	// Update the server's user list
 	oldNick := user.Nick
 	user.Nick = newNick
-	var recipients []*User
+	// The user must always see their own NICK, or their client keeps the
+	// old nick and won't recognize its own JOINs.
+	recipients := []*User{user}
 	if oldNickLower != "" {
 		delete(s.Users, oldNickLower)
 		s.Users[newNickLower] = user
@@ -552,8 +554,8 @@ func (s *Server) changeNick(user *User, newNick string) {
 
 	for _, ch := range s.Channels {
 		if _, ok := ch.Users[oldNickLower]; ok {
-			ch.Users[newNickLower] = user
 			delete(ch.Users, oldNickLower)
+			ch.Users[newNickLower] = user
 			for _, chUser := range ch.Users {
 				recipients = append(recipients, chUser)
 			}

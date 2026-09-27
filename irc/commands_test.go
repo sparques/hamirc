@@ -192,3 +192,33 @@ func TestCapEndGetsNoReply(t *testing.T) {
 		t.Fatalf("CAP END got reply %q", out.String())
 	}
 }
+
+func TestNickChangeOutsideChannelsEchoesToUser(t *testing.T) {
+	server := NewServer()
+	var out bytes.Buffer
+	user := NewUser("Maple", &out)
+	user.local = true
+	server.Users[nickKey(user.Nick)] = user
+
+	nick(server, user, []string{"NICK", "Cedar"})
+	if want := ":Maple NICK :Cedar\r\n"; out.String() != want {
+		t.Fatalf("nick-change message = %q, want %q", out.String(), want)
+	}
+}
+
+func TestNickCaseChangeKeepsChannelMembership(t *testing.T) {
+	server := NewServer()
+	user := NewUser("Maple", &bytes.Buffer{})
+	user.local = true
+	server.Users[nickKey(user.Nick)] = user
+	channel := server.Channel("#hamirc")
+	channel.Users[nickKey(user.Nick)] = user
+
+	nick(server, user, []string{"NICK", "MAPLE"})
+	if user.Nick != "MAPLE" {
+		t.Fatalf("nick = %q, want MAPLE", user.Nick)
+	}
+	if channel.Users[nickKey(user.Nick)] != user {
+		t.Fatal("case-only nick change dropped user from channel")
+	}
+}

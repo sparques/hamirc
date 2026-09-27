@@ -64,7 +64,13 @@ func (u *User) Write(buf []byte) (n int, err error) {
 // ID generates a user id in the form of <nick>!<user>@<Real Name>. ID converts spaces to underscores
 // for Real Name.
 func (u *User) ID() string {
-	return fmt.Sprintf("%s!%s@%s", u.Nick, u.Callsign, strings.Join(strings.Fields(u.RealName), "_"))
+	// Receivers need exactly one '!' and one '@' and a non-empty host.
+	host := strings.Join(strings.Fields(u.RealName), "_")
+	host = strings.NewReplacer("!", "_", "@", "_").Replace(host)
+	if host == "" {
+		host = "*"
+	}
+	return fmt.Sprintf("%s!%s@%s", u.Nick, u.Callsign, host)
 }
 
 // Parse breaks apart a nick!user@host identifier into its constituent parts and
@@ -75,20 +81,16 @@ func (u *User) ID() string {
 func (u *User) Parse(id string) {
 	// More rigorous nick/id validation can be added if malformed traffic
 	// becomes a practical issue.
-	fields := strings.FieldsFunc(id, func(r rune) bool {
-		if r == '!' || r == '@' {
-			return true
-		}
-		return false
-	})
+	nick, rest, ok1 := strings.Cut(id, "!")
+	callsign, realName, ok2 := strings.Cut(rest, "@")
 	// don't populate anything if we can't do this simple bit of parsing
 	// chances are we were sent junk or the message was garbled
-	if len(fields) != 3 {
+	if !ok1 || !ok2 || nick == "" || callsign == "" {
 		return
 	}
-	u.Nick = fields[0]
-	u.Callsign = fields[1]
-	u.RealName = fields[2]
+	u.Nick = nick
+	u.Callsign = callsign
+	u.RealName = realName
 }
 
 // Local returns true if the user is connected via TCP. This is used

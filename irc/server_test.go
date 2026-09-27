@@ -295,7 +295,7 @@ func TestSendLocalMessageWithoutTNCStillDeliversLocally(t *testing.T) {
 
 	server.send(sender, "NOTICE", "Birch", "copy")
 
-	want := ":Maple!N0CALL@ NOTICE Birch :copy\r\n"
+	want := ":Maple!N0CALL@* NOTICE Birch :copy\r\n"
 	if recipientOut.String() != want {
 		t.Fatalf("recipient = %q, want %q", recipientOut.String(), want)
 	}
@@ -332,7 +332,7 @@ func TestJoinChannelBroadcastsAndSendsNames(t *testing.T) {
 
 	server.joinChannel(joining, "#hamirc")
 
-	joinLine := ":Maple!N0CALL@ JOIN :#hamirc\r\n"
+	joinLine := ":Maple!N0CALL@* JOIN :#hamirc\r\n"
 	if !strings.Contains(joiningOut.String(), joinLine) {
 		t.Fatalf("joining user did not receive JOIN line: %q", joiningOut.String())
 	}
@@ -368,7 +368,7 @@ func TestPartChannelBroadcastsAndRemovesRemoteUser(t *testing.T) {
 		t.Fatal("remote user was not removed from channel")
 	}
 
-	want := ":Maple!N0CALL@ PART #hamirc :73\r\n"
+	want := ":Maple!N0CALL@* PART #hamirc :73\r\n"
 	if remoteOut.String() != want {
 		t.Fatalf("remote PART message = %q, want %q", remoteOut.String(), want)
 	}
@@ -507,5 +507,19 @@ func TestListChannelsIncludesClientOnStartAndEnd(t *testing.T) {
 	}
 	if !strings.Contains(got, ":hamirc 323 Maple :End of /LIST\r\n") {
 		t.Fatalf("LIST end reply missing client nick: %q", got)
+	}
+}
+
+func TestUserIDRoundTripsThroughParse(t *testing.T) {
+	for _, realName := range []string{"", "Joe joe@example.com", "Hi!"} {
+		sent := NewUser("Maple", io.Discard)
+		sent.Callsign = "N0CALL"
+		sent.RealName = realName
+
+		got := NewUser("", io.Discard)
+		got.Parse(sent.ID())
+		if got.Nick != "Maple" || got.Callsign != "N0CALL" {
+			t.Fatalf("Parse(%q) = nick %q callsign %q", sent.ID(), got.Nick, got.Callsign)
+		}
 	}
 }

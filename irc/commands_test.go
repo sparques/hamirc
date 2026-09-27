@@ -84,7 +84,7 @@ func TestPartBroadcastsAndRemovesUser(t *testing.T) {
 	if _, ok := channel.Users[nickKey(sender.Nick)]; ok {
 		t.Fatal("sender was not removed from channel")
 	}
-	want := ":Maple!N0CALL@ PART #hamirc :done\r\n"
+	want := ":Maple!N0CALL@* PART #hamirc :done\r\n"
 	if senderOut.String() != want {
 		t.Fatalf("sender PART message = %q, want %q", senderOut.String(), want)
 	}

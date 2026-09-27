@@ -477,13 +477,12 @@ func TestSetTopicLocalWithoutTNCBroadcastsLocally(t *testing.T) {
 	if channel.Topic != "check in" {
 		t.Fatalf("topic = %q, want check in", channel.Topic)
 	}
-	wantSetter := ":hamirc 332 Maple #hamirc :check in\r\n"
-	if setterOut.String() != wantSetter {
-		t.Fatalf("setter topic reply = %q, want %q", setterOut.String(), wantSetter)
+	want := ":Maple!N0CALL@* TOPIC #hamirc :check in\r\n"
+	if setterOut.String() != want {
+		t.Fatalf("setter topic message = %q, want %q", setterOut.String(), want)
 	}
-	wantOther := ":hamirc 332 Birch #hamirc :check in\r\n"
-	if otherOut.String() != wantOther {
-		t.Fatalf("other topic reply = %q, want %q", otherOut.String(), wantOther)
+	if otherOut.String() != want {
+		t.Fatalf("other topic message = %q, want %q", otherOut.String(), want)
 	}
 }
 

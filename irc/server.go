@@ -865,11 +865,11 @@ func (s *Server) setTopic(user *User, ch *Channel, topic string) {
 	s.Unlock()
 
 	for _, recipient := range recipients {
-		s.reply(recipient, RPL_TOPIC, recipient.Nick, chName, topic)
+		fmt.Fprintf(recipient, ":%s TOPIC %s :%s\r\n", userID, chName, topic)
 	}
 
 	// also push out topic change
 	if transmit {
-		s.transmit(":%s %s %s :%s", userID, "TOPIC", chName, topic)
+		s.transmit(":%s TOPIC %s :%s", userID, chName, topic)
 	}
 }

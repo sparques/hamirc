@@ -105,6 +105,30 @@ func (s *Server) CommandPort() io.ReadWriter {
 	return s.tnc.CommandPort(uint8(s.tncport))
 }
 
+// SetHardware sends a KISS SetHardware frame and waits briefly for the TNC's
+// reply. Many TNCs (direwolf included) never answer, and an unbounded read
+// would hang the caller.
+// ponytail: a timed-out read stays parked and eats the next reply; add a reply router if that bites.
+func (s *Server) SetHardware(cmd string) (string, error) {
+	port := s.CommandPort()
+	if _, err := port.Write(kiss.WithCommand(kiss.FrameTypeSetHardware, []byte(cmd))); err != nil {
+		return "", err
+	}
+	replies := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 1024)
+		if n, err := port.Read(buf); err == nil {
+			replies <- string(buf[:min(n, len(buf))])
+		}
+	}()
+	select {
+	case reply := <-replies:
+		return reply, nil
+	case <-time.After(2 * time.Second):
+		return "", errors.New("no reply from TNC")
+	}
+}
+
 func (s *Server) debugf(format string, v ...any) {
 	if s.Debug {
 		log.Printf(format, v...)
@@ -117,7 +141,9 @@ func (s *Server) userPurge() {
 		for _, ch := range s.Channels {
 			ch.Lock()
 			for nick, user := range ch.Users {
-				if time.Since(user.LastSeen) > s.UserPurgeAfter {
+				// local users stay until they part or disconnect; their client
+				// still shows them as joined
+				if !user.Local() && time.Since(user.LastSeen) > s.UserPurgeAfter {
 					delete(ch.Users, nick)
 				}
 			}
@@ -331,17 +357,16 @@ func (s *Server) handleTNC() {
 			continue
 		}
 		// add user to server if not previously seen
-		if existingUser := s.Nick(incomingUser.Nick); existingUser == nil {
-			s.Lock()
-			if existingUser = s.Users[nickKey(incomingUser.Nick)]; existingUser == nil {
-				s.Users[nickKey(incomingUser.Nick)] = incomingUser
-			} else {
-				incomingUser = existingUser
-			}
-			s.Unlock()
-		} else {
+		s.Lock()
+		if existingUser := s.Users[nickKey(incomingUser.Nick)]; existingUser == nil {
+			s.Users[nickKey(incomingUser.Nick)] = incomingUser
+		} else if !existingUser.Local() {
 			incomingUser = existingUser
 		}
+		// If a local user holds this nick, the radio user stays untracked.
+		// Reusing the local user would make the message look like ours and
+		// send() would retransmit it.
+		s.Unlock()
 
 		// do user-level ban check here?
 
@@ -360,7 +385,10 @@ func (s *Server) handleTNC() {
 			ch := s.Channel(args[2])
 
 			// add user to channel if not already there
-			if nil == ch.Nick(incomingUser.Nick) {
+			s.Lock()
+			_, inChannel := ch.Users[nickKey(incomingUser.Nick)]
+			s.Unlock()
+			if !inChannel {
 				s.joinChannel(incomingUser, ch.Name)
 			}
 
@@ -412,11 +440,6 @@ func (s *Server) handleConnection(conn net.Conn) {
 	user.local = true
 	user.conn = conn
 
-	// send a notice when local user connects
-	if s.Announce {
-		fmt.Fprintf(s.tnc.Port(uint8(s.tncport)), ":%s %s %s :%s", user.String(), "NOTICE", "#hamirc", "hamirc - IRC for Amateur Radio - https://github.com/sparques/hamirc")
-	}
-
 	// Handle commands
 	for scanner.Scan() {
 		if s.handleCommand(user, strings.TrimSpace(scanner.Text())) {
@@ -453,6 +476,11 @@ func (s *Server) acceptUser(user *User) {
 	s.Lock()
 	s.Users[nickKey(user.Nick)] = user
 	s.Unlock()
+
+	// Announce after registration so the transmission carries the callsign.
+	if s.Announce && s.tnc != nil {
+		s.transmit(":%s NOTICE #hamirc :hamirc - IRC for Amateur Radio - https://github.com/sparques/hamirc", user.ID())
+	}
 
 	s.motd(user)
 }
@@ -533,7 +561,7 @@ func (s *Server) changeNick(user *User, newNick string) {
 	// Check if the new nickname is already in use
 	// allow person to snag a remote user though
 	existingUser, ok := s.Users[newNickLower]
-	if ok && existingUser.Local() {
+	if ok && existingUser != user && existingUser.Local() {
 		s.Unlock()
 		s.reply(user, ERR_NICKNAMEINUSE, replyNick(user), newNick, "Nickname is already in use")
 		return
@@ -542,7 +570,9 @@ func (s *Server) changeNick(user *User, newNick string) {
 	// Update the server's user list
 	oldNick := user.Nick
 	user.Nick = newNick
-	var recipients []*User
+	// The user must always see their own NICK, or their client keeps the
+	// old nick and won't recognize its own JOINs.
+	recipients := []*User{user}
 	if oldNickLower != "" {
 		delete(s.Users, oldNickLower)
 		s.Users[newNickLower] = user
@@ -552,8 +582,8 @@ func (s *Server) changeNick(user *User, newNick string) {
 
 	for _, ch := range s.Channels {
 		if _, ok := ch.Users[oldNickLower]; ok {
-			ch.Users[newNickLower] = user
 			delete(ch.Users, oldNickLower)
+			ch.Users[newNickLower] = user
 			for _, chUser := range ch.Users {
 				recipients = append(recipients, chUser)
 			}
@@ -621,10 +651,7 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 	sender.LastSeen = time.Now()
 	senderID := sender.ID()
 
-	var tncWriter io.Writer
-	if sender.Local() && s.tnc != nil {
-		tncWriter = s.tnc.Port(uint8(s.tncport))
-	}
+	transmit := sender.Local() && s.tnc != nil
 
 	var recipients []*User
 	if strings.HasPrefix(target, "#") {
@@ -634,10 +661,10 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 			return
 		}
 		for _, u := range ch.Users {
-			if u.Nick == sender.Nick && cmd != "PART" {
+			if u == sender && cmd != "PART" {
 				continue
 			}
-			if slices.Contains(u.partedChannels, target) {
+			if slices.Contains(u.partedChannels, channelKey(target)) {
 				continue
 			}
 			recipients = append(recipients, u)
@@ -648,12 +675,19 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 	s.Unlock()
 
 	// Transmit local messages via radio after releasing the server lock.
-	if tncWriter != nil {
-		fmt.Fprintf(tncWriter, ":%s %s %s :%s", senderID, cmd, target, msg)
+	if transmit {
+		s.transmit(":%s %s %s :%s", senderID, cmd, target, msg)
 	}
 
 	for _, recipient := range recipients {
 		fmt.Fprintf(recipient, ":%s %s %s :%s\r\n", senderID, cmd, target, msg)
+	}
+}
+
+// transmit sends one line over the radio.
+func (s *Server) transmit(format string, args ...any) {
+	if _, err := fmt.Fprintf(s.tnc.Port(uint8(s.tncport)), format, args...); err != nil {
+		log.Printf("error transmitting to TNC: %v", err)
 	}
 }
 
@@ -697,12 +731,8 @@ func (s *Server) joinChannel(user *User, channelName string) {
 		s.reply(user, RPL_TOPIC, user.Nick, channelName, topic)
 	}
 
-	fmt.Fprintf(user, ":%s 353 %s = %s :", s.Name, user.Nick, channelName)
-
-	for _, name := range names {
-		fmt.Fprintf(user, "%s ", name)
-	}
-	fmt.Fprintf(user, "\r\n")
+	// one Write per line so concurrent writers can't splice into it
+	fmt.Fprintf(user, ":%s 353 %s = %s :%s\r\n", s.Name, user.Nick, channelName, strings.Join(names, " "))
 	s.reply(user, RPL_ENDOFNAMES, user.Nick, channelName, "End of /NAMES list")
 }
 
@@ -713,7 +743,8 @@ func (s *Server) partChannel(user *User, channelName, reason string) bool {
 		s.Unlock()
 		return false
 	}
-	if _, ok := ch.Users[nickKey(user.Nick)]; !ok {
+	// compare pointers: a local user may share a nick with a radio user
+	if ch.Users[nickKey(user.Nick)] != user {
 		s.Unlock()
 		return false
 	}
@@ -733,30 +764,36 @@ func (s *Server) userHost(user *User, nicks []string) {
 	defer s.Unlock()
 
 	//:irc.example.com 302 Sparques :Nick1=-user1@host1 Nick2=+user2@host2
-	fmt.Fprintf(user, ":%s 302 %s :", s.Name, user.Nick)
-
+	var replies []string
 	for _, nick := range nicks {
 		u, ok := s.Users[nickKey(nick)]
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(user, "%s=-%s@%s ", nick, u.Callsign, strings.ReplaceAll(u.RealName, " ", "_"))
+		replies = append(replies, fmt.Sprintf("%s=-%s@%s", nick, u.Callsign, strings.ReplaceAll(u.RealName, " ", "_")))
 	}
-	fmt.Fprintf(user, "\r\n")
+	fmt.Fprintf(user, ":%s 302 %s :%s\r\n", s.Name, user.Nick, strings.Join(replies, " "))
 }
 
 func (s *Server) quit(user *User, reason string) {
 	s.Lock()
-	channels := make([]string, 0, len(s.Channels))
+	var recipients []*User
 	for _, ch := range s.Channels {
-		if _, ok := ch.Users[nickKey(user.Nick)]; ok {
-			channels = append(channels, ch.Name)
+		if ch.Users[nickKey(user.Nick)] != user {
+			continue
+		}
+		for _, u := range ch.Users {
+			if u != user {
+				recipients = append(recipients, u)
+			}
 		}
 	}
+	userID := user.ID()
 	s.Unlock()
 
-	for _, channel := range channels {
-		s.send(user, "QUIT", channel, reason)
+	// Local only: radio stations drop QUIT, so transmitting it wastes airtime.
+	for _, recipient := range uniqueUsers(recipients) {
+		fmt.Fprintf(recipient, ":%s QUIT :%s\r\n", userID, reason)
 	}
 }
 
@@ -824,18 +861,15 @@ func (s *Server) setTopic(user *User, ch *Channel, topic string) {
 	}
 	chName := ch.Name
 	userID := user.ID()
-	var tncWriter io.Writer
-	if user.Local() && s.tnc != nil {
-		tncWriter = s.tnc.Port(uint8(s.tncport))
-	}
+	transmit := user.Local() && s.tnc != nil
 	s.Unlock()
 
 	for _, recipient := range recipients {
-		s.reply(recipient, RPL_TOPIC, recipient.Nick, chName, topic)
+		fmt.Fprintf(recipient, ":%s TOPIC %s :%s\r\n", userID, chName, topic)
 	}
 
 	// also push out topic change
-	if tncWriter != nil {
-		fmt.Fprintf(tncWriter, ":%s %s %s :%s", userID, "TOPIC", chName, topic)
+	if transmit {
+		s.transmit(":%s TOPIC %s :%s", userID, chName, topic)
 	}
 }

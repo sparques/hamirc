@@ -11,7 +11,6 @@ import (
 	"syscall"
 
 	"github.com/sparques/hamirc/irc"
-	"github.com/sparques/kiss"
 )
 
 var (
@@ -79,14 +78,12 @@ func main() {
 
 	if len(sethardware) > 0 {
 		for _, frame := range sethardware {
-			server.CommandPort().Write(kiss.WithCommand(kiss.FrameTypeSetHardware, []byte(frame)))
-			reply := make([]byte, 1024)
-			n, err := server.CommandPort().Read(reply)
+			reply, err := server.SetHardware(frame)
 			if err != nil {
-				log.Printf("Error reading SetHardware resposne: %v", err)
+				log.Printf("SetHardware %s: %v", frame, err)
 				continue
 			}
-			log.Printf("SetHardware: %s; Reply: %s", frame, string(reply[:n]))
+			log.Printf("SetHardware: %s; Reply: %s", frame, reply)
 		}
 	}
 

@@ -84,7 +84,7 @@ func TestPartBroadcastsAndRemovesUser(t *testing.T) {
 	if _, ok := channel.Users[nickKey(sender.Nick)]; ok {
 		t.Fatal("sender was not removed from channel")
 	}
-	want := ":Maple!N0CALL@ PART #hamirc :done\r\n"
+	want := ":Maple!N0CALL@* PART #hamirc :done\r\n"
 	if senderOut.String() != want {
 		t.Fatalf("sender PART message = %q, want %q", senderOut.String(), want)
 	}
@@ -173,5 +173,52 @@ func TestNickChangeBroadcastsToChannelMembers(t *testing.T) {
 	}
 	if otherOut.String() != want {
 		t.Fatalf("other nick-change message = %q, want %q", otherOut.String(), want)
+	}
+}
+
+func TestCapEndGetsNoReply(t *testing.T) {
+	server := NewServer()
+	server.Name = "hamirc"
+	var out bytes.Buffer
+	user := NewUser("", &out)
+
+	server.handleCommand(user, "CAP LS 302")
+	if want := ":hamirc CAP * LS :\r\n"; out.String() != want {
+		t.Fatalf("CAP LS reply = %q, want %q", out.String(), want)
+	}
+	out.Reset()
+	server.handleCommand(user, "CAP END")
+	if out.Len() != 0 {
+		t.Fatalf("CAP END got reply %q", out.String())
+	}
+}
+
+func TestNickChangeOutsideChannelsEchoesToUser(t *testing.T) {
+	server := NewServer()
+	var out bytes.Buffer
+	user := NewUser("Maple", &out)
+	user.local = true
+	server.Users[nickKey(user.Nick)] = user
+
+	nick(server, user, []string{"NICK", "Cedar"})
+	if want := ":Maple NICK :Cedar\r\n"; out.String() != want {
+		t.Fatalf("nick-change message = %q, want %q", out.String(), want)
+	}
+}
+
+func TestNickCaseChangeKeepsChannelMembership(t *testing.T) {
+	server := NewServer()
+	user := NewUser("Maple", &bytes.Buffer{})
+	user.local = true
+	server.Users[nickKey(user.Nick)] = user
+	channel := server.Channel("#hamirc")
+	channel.Users[nickKey(user.Nick)] = user
+
+	nick(server, user, []string{"NICK", "MAPLE"})
+	if user.Nick != "MAPLE" {
+		t.Fatalf("nick = %q, want MAPLE", user.Nick)
+	}
+	if channel.Users[nickKey(user.Nick)] != user {
+		t.Fatal("case-only nick change dropped user from channel")
 	}
 }

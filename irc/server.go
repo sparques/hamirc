@@ -22,6 +22,12 @@ type UserMap map[string]*User
 
 const defaultTNCBaud = 115200
 
+var defaultTNCRetryDelays = []time.Duration{
+	time.Second,
+	10 * time.Second,
+	time.Minute,
+}
+
 func nickKey(nick string) string {
 	return strings.ToLower(nick)
 }
@@ -40,12 +46,16 @@ type Server struct {
 	UserPurgeAfter time.Duration
 	// AutoJoin causes Local() users to automatically join channels they
 	// get messages for.
-	AutoJoin bool
-	Debug    bool
-	Announce bool
-	exitch   chan error
-	tnc      *kiss.TNC
-	tncport  int
+	AutoJoin       bool
+	Debug          bool
+	Announce       bool
+	exitch         chan error
+	tncMu          sync.RWMutex
+	tnc            *kiss.TNC
+	tncport        int
+	tncConnect     func() (*kiss.TNC, error)
+	tncRetryDelays []time.Duration
+	tncRetryWait   func(time.Duration)
 }
 
 func NewServer() *Server {
@@ -102,7 +112,19 @@ func (s *Server) Exit(err error) {
 }
 
 func (s *Server) CommandPort() io.ReadWriter {
-	return s.tnc.CommandPort(uint8(s.tncport))
+	return s.currentTNC().CommandPort(uint8(s.tncport))
+}
+
+func (s *Server) currentTNC() *kiss.TNC {
+	s.tncMu.RLock()
+	defer s.tncMu.RUnlock()
+	return s.tnc
+}
+
+func (s *Server) setTNC(tnc *kiss.TNC) {
+	s.tncMu.Lock()
+	s.tnc = tnc
+	s.tncMu.Unlock()
 }
 
 // SetHardware sends a KISS SetHardware frame and waits briefly for the TNC's
@@ -132,6 +154,42 @@ func (s *Server) SetHardware(cmd string) (string, error) {
 func (s *Server) debugf(format string, v ...any) {
 	if s.Debug {
 		log.Printf(format, v...)
+	}
+}
+
+type logWriter struct {
+	server *Server
+}
+
+// LogWriter returns a writer that sends each log line to connected IRC
+// clients as a server NOTICE.
+func (s *Server) LogWriter() io.Writer {
+	return logWriter{server: s}
+}
+
+func (w logWriter) Write(p []byte) (int, error) {
+	for _, line := range strings.Split(strings.ReplaceAll(string(p), "\r", ""), "\n") {
+		if line == "" {
+			continue
+		}
+		w.server.noticeLocalUsers(line)
+	}
+	return len(p), nil
+}
+
+func (s *Server) noticeLocalUsers(message string) {
+	s.Lock()
+	users := make([]*User, 0, len(s.Users))
+	for _, user := range s.Users {
+		if user.Local() {
+			users = append(users, user)
+		}
+	}
+	serverName := s.Name
+	s.Unlock()
+
+	for _, user := range users {
+		fmt.Fprintf(user, ":%s NOTICE %s :%s\r\n", serverName, user.Nick, message)
 	}
 }
 
@@ -213,27 +271,33 @@ func (s *Server) ConnectTNC(addr string, tncport int) (err error) {
 		return err
 	}
 	if isSerial {
-		mode := &serial.Mode{
-			BaudRate: baud,
+		s.tncConnect = func() (*kiss.TNC, error) {
+			mode := &serial.Mode{BaudRate: baud}
+			port, err := serial.Open(serialAddr, mode)
+			if err != nil {
+				return nil, fmt.Errorf("could not open serial port for kiss tnc: %w", err)
+			}
+			log.Printf("Connected to TNC port %d at %s, %d baud", tncport, serialAddr, mode.BaudRate)
+			return kiss.NewTNC(port), nil
 		}
-
-		port, err := serial.Open(serialAddr, mode)
-		if err != nil {
-			return fmt.Errorf("could not open serial port for kiss tnc: %w", err)
+	} else {
+		s.tncConnect = func() (*kiss.TNC, error) {
+			conn, err := net.Dial("tcp", addr)
+			if err != nil {
+				return nil, fmt.Errorf("could not connect to kiss tnc: %w", err)
+			}
+			log.Printf("Connected to TNC port %d at %s", tncport, addr)
+			return kiss.NewTNC(conn), nil
 		}
-		log.Printf("Connected to TNC port %d at %s, %d baud", tncport, serialAddr, mode.BaudRate)
-		s.tnc = kiss.NewTNC(port)
-		s.tncport = tncport
-		return nil
 	}
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("could not connect to kiss tnc: %w", err)
-	}
-	log.Printf("Connected to TNC port %d at %s", tncport, addr)
-	s.tnc = kiss.NewTNC(conn)
 	s.tncport = tncport
-	return nil
+	s.tncRetryDelays = defaultTNCRetryDelays
+	s.tncRetryWait = time.Sleep
+	tnc, err := s.tncConnect()
+	if err == nil {
+		s.setTNC(tnc)
+	}
+	return err
 }
 
 func parseSerialTNCAddress(addr string) (port string, baud int, ok bool, err error) {
@@ -315,22 +379,24 @@ func (s *Server) OpenTNC(path string) error {
 	if err != nil {
 		return fmt.Errorf("could not open %s kiss tnc: %w", path, err)
 	}
-	s.tnc = kiss.NewTNC(fh)
+	s.setTNC(kiss.NewTNC(fh))
 	return nil
 }
 
 func (s *Server) handleTNC() {
-	defer s.Exit(errors.New("lost connection to TNC"))
-
-	port := s.tnc.Port(uint8(s.tncport))
-
 	buf := make([]byte, 1024*512)
 	for {
+		port := s.currentTNC().Port(uint8(s.tncport))
 		buf = buf[0:1024]
 		n, err := port.Read(buf)
 		if err != nil {
 			log.Printf("error reading from TNC port: %s", err)
-			return
+			s.setTNC(nil)
+			if err := s.reconnectTNC(); err != nil {
+				s.Exit(err)
+				return
+			}
+			continue
 		}
 		// TODO: error handling.
 		buf = buf[:n]
@@ -464,6 +530,32 @@ func (s *Server) removeUser(user *User) {
 	}
 }
 
+func (s *Server) reconnectTNC() error {
+	if s.tncConnect == nil {
+		return errors.New("lost connection to TNC")
+	}
+
+	var lastErr error
+	wait := s.tncRetryWait
+	if wait == nil {
+		wait = time.Sleep
+	}
+	for attempt, delay := range s.tncRetryDelays {
+		log.Printf("TNC reconnect attempt %d of %d in %s", attempt+1, len(s.tncRetryDelays), delay)
+		wait(delay)
+
+		tnc, err := s.tncConnect()
+		if err == nil {
+			s.setTNC(tnc)
+			return nil
+		}
+		lastErr = err
+		log.Printf("TNC reconnect attempt %d failed: %v", attempt+1, err)
+	}
+
+	return fmt.Errorf("lost connection to TNC after %d reconnect attempts: %w", len(s.tncRetryDelays), lastErr)
+}
+
 func (s *Server) acceptUser(user *User) {
 	if user.Nick == "" {
 		return
@@ -478,7 +570,7 @@ func (s *Server) acceptUser(user *User) {
 	s.Unlock()
 
 	// Announce after registration so the transmission carries the callsign.
-	if s.Announce && s.tnc != nil {
+	if s.Announce && s.currentTNC() != nil {
 		s.transmit(":%s NOTICE #hamirc :hamirc - IRC for Amateur Radio - https://github.com/sparques/hamirc", user.ID())
 	}
 
@@ -651,7 +743,7 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 	sender.LastSeen = time.Now()
 	senderID := sender.ID()
 
-	transmit := sender.Local() && s.tnc != nil
+	transmit := sender.Local() && s.currentTNC() != nil
 
 	var recipients []*User
 	if strings.HasPrefix(target, "#") {
@@ -686,7 +778,11 @@ func (s *Server) send(sender *User, cmd, target, msg string) {
 
 // transmit sends one line over the radio.
 func (s *Server) transmit(format string, args ...any) {
-	if _, err := fmt.Fprintf(s.tnc.Port(uint8(s.tncport)), format, args...); err != nil {
+	tnc := s.currentTNC()
+	if tnc == nil {
+		return
+	}
+	if _, err := fmt.Fprintf(tnc.Port(uint8(s.tncport)), format, args...); err != nil {
 		log.Printf("error transmitting to TNC: %v", err)
 	}
 }
@@ -861,7 +957,7 @@ func (s *Server) setTopic(user *User, ch *Channel, topic string) {
 	}
 	chName := ch.Name
 	userID := user.ID()
-	transmit := user.Local() && s.tnc != nil
+	transmit := user.Local() && s.currentTNC() != nil
 	s.Unlock()
 
 	for _, recipient := range recipients {

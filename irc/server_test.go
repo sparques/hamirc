@@ -2,6 +2,7 @@ package irc
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net"
 	"reflect"
@@ -188,6 +189,94 @@ func TestParseSerialTNCAddress(t *testing.T) {
 					tt.addr, gotPort, gotBaud, gotOK, tt.wantPort, tt.wantBaud, tt.wantOK)
 			}
 		})
+	}
+}
+
+func TestReconnectTNCRetriesWithConfiguredDelays(t *testing.T) {
+	server := NewServer()
+	server.tncRetryDelays = []time.Duration{time.Second, 10 * time.Second, time.Minute}
+
+	var waited []time.Duration
+	server.tncRetryWait = func(delay time.Duration) {
+		waited = append(waited, delay)
+	}
+
+	attempts := 0
+	server.tncConnect = func() (*kiss.TNC, error) {
+		attempts++
+		return nil, errors.New("TNC unavailable")
+	}
+
+	err := server.reconnectTNC()
+	if err == nil {
+		t.Fatal("reconnectTNC() returned nil, want error")
+	}
+	if attempts != 3 {
+		t.Fatalf("reconnectTNC() made %d attempts, want 3", attempts)
+	}
+	wantWaited := []time.Duration{time.Second, 10 * time.Second, time.Minute}
+	if !reflect.DeepEqual(waited, wantWaited) {
+		t.Fatalf("reconnectTNC() waited %v, want %v", waited, wantWaited)
+	}
+	if !strings.Contains(err.Error(), "after 3 reconnect attempts") {
+		t.Fatalf("reconnectTNC() error = %q, want exhausted-attempt count", err)
+	}
+}
+
+func TestReconnectTNCStopsAfterSuccessfulAttempt(t *testing.T) {
+	server := NewServer()
+	server.tncRetryDelays = []time.Duration{time.Second, 10 * time.Second, time.Minute}
+	server.tncRetryWait = func(time.Duration) {}
+
+	wantTNC := kiss.NewTNC(&bytes.Buffer{})
+	attempts := 0
+	server.tncConnect = func() (*kiss.TNC, error) {
+		attempts++
+		if attempts < 2 {
+			return nil, errors.New("TNC unavailable")
+		}
+		return wantTNC, nil
+	}
+
+	if err := server.reconnectTNC(); err != nil {
+		t.Fatalf("reconnectTNC() error = %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("reconnectTNC() made %d attempts, want 2", attempts)
+	}
+	if server.tnc != wantTNC {
+		t.Fatal("reconnectTNC() did not install the reconnected TNC")
+	}
+}
+
+func TestLogWriterNoticesConnectedLocalUsers(t *testing.T) {
+	server := NewServer()
+	server.Name = "hamirc-test"
+
+	var firstOut, secondOut, remoteOut bytes.Buffer
+	first := NewUser("Maple", &firstOut)
+	first.local = true
+	second := NewUser("Birch", &secondOut)
+	second.local = true
+	remote := NewUser("Cedar", &remoteOut)
+
+	server.Users[nickKey(first.Nick)] = first
+	server.Users[nickKey(second.Nick)] = second
+	server.Users[nickKey(remote.Nick)] = remote
+
+	input := "2026/10/12 connected to TNC\n"
+	if n, err := server.LogWriter().Write([]byte(input)); err != nil || n != len(input) {
+		t.Fatalf("LogWriter().Write() = %d, %v; want %d, nil", n, err, len(input))
+	}
+
+	if got, want := firstOut.String(), ":hamirc-test NOTICE Maple :2026/10/12 connected to TNC\r\n"; got != want {
+		t.Fatalf("first client received %q, want %q", got, want)
+	}
+	if got, want := secondOut.String(), ":hamirc-test NOTICE Birch :2026/10/12 connected to TNC\r\n"; got != want {
+		t.Fatalf("second client received %q, want %q", got, want)
+	}
+	if got := remoteOut.String(); got != "" {
+		t.Fatalf("radio user received mirrored log %q", got)
 	}
 }
 

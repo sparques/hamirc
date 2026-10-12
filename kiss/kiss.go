@@ -61,6 +61,7 @@ var (
 type TNC struct {
 	ports  [8]port
 	closed bool
+	closer io.Closer
 }
 
 type port struct {
@@ -71,6 +72,9 @@ type port struct {
 
 func NewTNC(rw io.ReadWriter) *TNC {
 	t := &TNC{}
+	if closer, ok := rw.(io.Closer); ok {
+		t.closer = closer
+	}
 	for i := range t.ports {
 		t.ports[i] = port{
 			id:    uint8(i),
@@ -85,6 +89,9 @@ func NewTNC(rw io.ReadWriter) *TNC {
 }
 
 func (t *TNC) router(rd io.Reader) {
+	if t.closer != nil {
+		defer t.closer.Close()
+	}
 	scanner := bufio.NewScanner(rd)
 	scanner.Split(Split)
 	for scanner.Scan() {

@@ -76,6 +76,7 @@ Common options:
 - `-mustload`: exit if an existing state file cannot be loaded. Defaults to `true`.
 - `-autojoin`: automatically join local users to channels heard over radio. Defaults to `true`.
 - `-debug`: log raw IRC and TNC traffic. Defaults to `false`.
+- `-mirrorlog`: mirror log messages to all connected IRC clients as server notices. Defaults to `false`.
 
 The default behavior is to automatically add all "local users" (that is, users connected via an IRC client on the localhost) to any channel for which a message is received. 
 
